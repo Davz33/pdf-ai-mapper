@@ -1,0 +1,6 @@
+torch
+pdfminer.six
+pytesseract
+transformers
+faiss-cpu  # Or faiss-gpu if you have a GPU
+Pillow

@@ -1,9 +1,14 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/python
 {
-	"name": "Python 3",
-	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/python:3.12",
+	"name": "PDF AI Mapper",
+	
+	// Use Docker Compose for the dev container
+	"dockerComposeFile": "../docker-compose.yml",
+	"service": "pdf-ai-mapper",
+	"workspaceFolder": "/app",
+	
+	// Configure VS Code settings
 	"customizations": {
 		"vscode": {
 			"extensions": [
@@ -15,24 +20,18 @@
 			}
 		}
 	},
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
 
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [],
+	// Forward the same port as in docker-compose.yml
+	"forwardPorts": [7860],
 	"portsAttributes": {
 		"7860": {
 			"label": "Application",
 			"onAutoForward": "openBrowser"
 		}
 	},
-
-	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "curl -fsSL https://pixi.sh/install.sh | bash && pixi install",
-
-	// Configure tool-specific properties.
-	// "customizations": {},
-
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	
+	// Set the same environment variables as in docker-compose.yml
+	"containerEnv": {
+		"PYTHONUNBUFFERED": "1"
+	}
 }

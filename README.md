@@ -19,6 +19,8 @@ A Python backend for processing, categorizing, and searching through PDF documen
 
 ## Installation
 
+### Option 1: Local Installation
+
 1. Install Tesseract OCR engine:
    - **Ubuntu/Debian**: `sudo apt-get install tesseract-ocr`
    - **MacOS**: `brew install tesseract`
@@ -41,7 +43,27 @@ curl -fsSL https://pixi.sh/install.sh | bash
 pixi install
 ```
 
+### Option 2: Using Docker
+
+1. Make sure you have Docker and Docker Compose installed:
+   - [Install Docker](https://docs.docker.com/get-docker/)
+   - [Install Docker Compose](https://docs.docker.com/compose/install/)
+
+2. Build and run the Docker container:
+
+```sh
+docker-compose up --build
+```
+
+This will:
+
+- Build the Docker image with all required dependencies
+- Start the application on port 7860
+- Mount volumes for uploads and processed data
+
 ## Usage
+
+### Local Usage
 
 1. Start the server:
 
@@ -55,9 +77,30 @@ or
 pixi run python main.py
 ```
 
-2. The API will be available at `http://localhost:7860`
+### Docker Usage
 
-3. Available endpoints:
+1. Start the application with Docker Compose:
+
+```sh
+docker-compose up
+```
+
+2. To run in the background:
+
+```sh
+docker-compose up -d
+```
+
+3. To stop the application:
+
+```sh
+docker-compose down
+```
+
+The API will be available at `http://localhost:7860` for both local and Docker usage.
+
+## Available Endpoints
+
    - `POST /upload/`: Upload and process a PDF or image file
    - `POST /search/`: Search through processed documents
    - `GET /categories/`: Get all available document categories
@@ -141,3 +184,13 @@ GET /categories/
    - Search uses a simple but effective relevance scoring system
    - Results can be filtered by categories
    - Relevant snippets are generated to show matching context
+
+## Getting the GitHub Codespace Docker Image
+
+GitHub Codespaces doesn't provide a direct way to download the exact Docker image it uses. However, the Dockerfile in this project replicates the functionality of the GitHub Codespace by:
+
+1. Using the same base image (`mcr.microsoft.com/devcontainers/python:3.12`)
+2. Installing the same system dependencies
+3. Setting up pixi in the same way as the devcontainer.json
+
+This approach ensures that the Docker environment closely matches the GitHub Codespace environment.

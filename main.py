@@ -62,8 +62,41 @@ class SearchQuery(BaseModel):
 def process_document_background(file_path, file_name):
     try:
         logger.info(f"Background processing started for file: {file_name}")
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_path}")
+            return
+            
+        # Check file size
+        file_size = os.path.getsize(file_path)
+        logger.info(f"Processing file of size: {file_size} bytes")
+        
+        # Process the document
         doc_id, categories = document_processor.process(file_path)
-        logger.info(f"Background processing completed for file: {file_name}, doc_id: {doc_id}, categories: {categories}")
+        
+        # Check the results
+        if categories and categories[0].startswith("Error:"):
+            logger.error(f"Error processing document: {categories[0]}")
+        else:
+            logger.info(f"Background processing completed successfully for file: {file_name}")
+            logger.info(f"Document ID: {doc_id}, Categories: {categories}")
+            
+        # Update status endpoint data
+        try:
+            # Check if we have categories
+            if document_processor.document_index["categories"]:
+                logger.info(f"Current categories: {document_processor.document_index['categories']}")
+            else:
+                logger.warning("No categories found after processing")
+                
+            # Check document count
+            doc_count = len(document_processor.document_index["documents"])
+            logger.info(f"Total documents processed: {doc_count}")
+        except Exception as e:
+            logger.error(f"Error updating status data: {str(e)}")
+            logger.error(traceback.format_exc())
+            
     except Exception as e:
         logger.error(f"Error in background processing for file {file_name}: {str(e)}")
         logger.error(traceback.format_exc())
@@ -164,6 +197,60 @@ async def get_categories():
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error retrieving categories: {str(e)}")
 
+@app.post("/recategorize/")
+async def recategorize_documents():
+    """Force recategorization of all documents"""
+    try:
+        logger.info("Starting recategorization of all documents")
+        
+        # Get all documents
+        documents = document_processor.document_index["documents"]
+        doc_count = len(documents)
+        
+        if doc_count == 0:
+            return {"status": "success", "message": "No documents to recategorize"}
+            
+        # Process each document
+        updated_count = 0
+        for doc_id, doc in list(documents.items()):
+            try:
+                # Get the document path
+                file_path = doc["path"]
+                
+                # Check if file exists
+                if not os.path.exists(file_path):
+                    logger.warning(f"Document file not found: {file_path}")
+                    continue
+                
+                # Get preprocessed text
+                preprocessed_text = doc["preprocessed_text"]
+                
+                # Recategorize
+                categories = document_processor._categorize_text(preprocessed_text)
+                
+                # Update document
+                documents[doc_id]["categories"] = categories
+                updated_count += 1
+                
+                logger.info(f"Recategorized document {doc_id}: {categories}")
+            except Exception as e:
+                logger.error(f"Error recategorizing document {doc_id}: {str(e)}")
+        
+        # Save updated index
+        with open(document_processor.index_file, 'w') as f:
+            import json
+            json.dump(document_processor.document_index, f)
+        
+        return {
+            "status": "success",
+            "message": f"Recategorized {updated_count} of {doc_count} documents",
+            "categories": document_processor.document_index["categories"]
+        }
+    except Exception as e:
+        logger.error(f"Error during recategorization: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error during recategorization: {str(e)}")
+
 # Add a status endpoint to check processing status
 @app.get("/status/")
 async def get_status():
@@ -173,14 +260,25 @@ async def get_status():
         doc_count = len(document_processor.document_index["documents"])
         cat_count = len(document_processor.document_index["categories"])
         
+        # Get document details
+        documents = []
+        for doc_id, doc in document_processor.document_index["documents"].items():
+            documents.append({
+                "id": doc_id,
+                "filename": doc["filename"],
+                "categories": doc["categories"]
+            })
+        
         return {
             "status": "healthy",
             "documents_processed": doc_count,
             "categories_count": cat_count,
-            "categories": document_processor.document_index["categories"]
+            "categories": document_processor.document_index["categories"],
+            "documents": documents
         }
     except Exception as e:
         logger.error(f"Error getting status: {str(e)}")
+        logger.error(traceback.format_exc())
         return {"status": "error", "message": str(e)}
 
 # Add a health check endpoint

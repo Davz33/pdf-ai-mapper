@@ -298,32 +298,33 @@ async def recategorize_documents():
 # Add a status endpoint to check processing status
 @app.get("/status/")
 async def get_status():
-    """Get the status of document processing"""
+    """
+    Get the processing status of all documents.
+    """
     try:
-        # Count documents
-        doc_count = len(document_processor.document_index["documents"])
-        cat_count = len(document_processor.document_index["categories"])
-        
-        # Get document details
+        logger.info("Retrieving document status information")
         documents = []
-        for doc_id, doc in document_processor.document_index["documents"].items():
-            documents.append({
-                "id": doc_id,
-                "filename": doc["filename"],
-                "categories": doc["categories"]
-            })
         
-        return {
-            "status": "healthy",
-            "documents_processed": doc_count,
-            "categories_count": cat_count,
-            "categories": document_processor.document_index["categories"],
-            "documents": documents
-        }
+        # Get all documents from the index
+        for doc_id, doc_info in document_processor.document_index["documents"].items():
+            status = "processed" if doc_info.get("processed", False) else "processing"
+            
+            # Check if there was an error during processing
+            if doc_info.get("error", False):
+                status = "error"
+                
+            documents.append({
+                "document_id": doc_id,
+                "filename": doc_info.get("filename", "Unknown"),
+                "status": status,
+                "categories": doc_info.get("categories", ["Processing"])
+            })
+            
+        logger.info(f"Retrieved status for {len(documents)} documents")
+        return {"documents": documents}
     except Exception as e:
-        logger.error(f"Error getting status: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Error retrieving document status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving document status: {str(e)}")
 
 # Add a health check endpoint
 @app.get("/health")

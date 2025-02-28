@@ -15,7 +15,7 @@ A tool for processing, categorizing, and searching through PDF documents and ima
 - Python 3.8+
 - Tesseract OCR engine
 - Poppler (for PDF to image conversion)
-- Pixi package manager
+- Pixi package manager / Docker
 
 ## Installation
 

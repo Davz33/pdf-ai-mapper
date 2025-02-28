@@ -1,6 +1,6 @@
 # PDF and Image AI Mapper
 
-A Python backend for processing, categorizing, and searching through PDF documents and images using OCR.
+A tool for processing, categorizing, and searching through PDF documents and images using OCR.
 
 ## Features
 

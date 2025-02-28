@@ -177,6 +177,16 @@ GET /categories/
 }
 ```
 
+### Force Recategorizazion
+
+To force recategorization of all documents:
+
+```text
+POST /recategorize/
+```
+
+This endpoint processes all existing documents, applies the improved categorization logic, updates the document index and returns the new categories.
+
 ## How It Works
 
 1. **Document Processing**:

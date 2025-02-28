@@ -16,6 +16,7 @@ import re
 import time
 import threading
 import logging
+import traceback
 
 # Download necessary NLTK data
 try:
@@ -89,9 +90,8 @@ class DocumentProcessor:
             )
             self.model = KMeans(n_clusters=5, random_state=42)
     
-    def _extract_text_from_pdf(self, file_path, timeout=60):
+    def _extract_text_from_pdf(self, file_path, timeout=120):
         """Extract text content from PDF files with timeout protection"""
-        text = ""
         result = {"text": "", "success": False, "error": None}
         
         def extract_with_timeout():
@@ -99,16 +99,38 @@ class DocumentProcessor:
                 # First try direct PDF text extraction
                 with open(file_path, 'rb') as f:
                     pdf_reader = PyPDF2.PdfReader(f)
+                    logging.info(f"PDF has {len(pdf_reader.pages)} pages")
+                    
+                    # Process pages in batches to avoid memory issues
                     for page_num in range(len(pdf_reader.pages)):
-                        page = pdf_reader.pages[page_num]
-                        result["text"] += page.extract_text() or ""
+                        if page_num % 10 == 0:
+                            logging.info(f"Processing page {page_num} of {len(pdf_reader.pages)}")
+                        try:
+                            page = pdf_reader.pages[page_num]
+                            page_text = page.extract_text() or ""
+                            result["text"] += page_text + "\n"
+                        except Exception as e:
+                            logging.error(f"Error extracting text from page {page_num}: {e}")
                 
-                # If no text was extracted or text is too short, try OCR
-                if len(result["text"].strip()) < 100:
-                    images = convert_from_path(file_path)
-                    for i, image in enumerate(images):
-                        page_text = pytesseract.image_to_string(image)
-                        result["text"] += page_text
+                # Log the amount of text extracted
+                text_length = len(result["text"].strip())
+                logging.info(f"Extracted {text_length} characters of text from PDF")
+                
+                # If no text was extracted or text is too short, try OCR on first few pages
+                if text_length < 1000:
+                    logging.info("Text extraction yielded limited results, trying OCR")
+                    try:
+                        # Only convert first 5 pages to images to save time
+                        max_pages = min(5, len(pdf_reader.pages))
+                        images = convert_from_path(file_path, first_page=1, last_page=max_pages)
+                        logging.info(f"Converted {len(images)} pages to images for OCR")
+                        
+                        for i, image in enumerate(images):
+                            logging.info(f"Running OCR on page {i+1}")
+                            page_text = pytesseract.image_to_string(image)
+                            result["text"] += page_text + "\n"
+                    except Exception as e:
+                        logging.error(f"Error during OCR processing: {e}")
                 
                 result["success"] = True
             except Exception as e:
@@ -123,13 +145,21 @@ class DocumentProcessor:
         
         if thread.is_alive():
             logging.error(f"PDF extraction timed out after {timeout} seconds: {file_path}")
+            # Try to get whatever text was extracted before timeout
+            if result["text"]:
+                logging.info(f"Using partial text extracted before timeout ({len(result['text'])} characters)")
+                return result["text"]
             return f"Error: PDF extraction timed out after {timeout} seconds. The file may be too large or complex."
         
         if not result["success"] and result["error"]:
             logging.error(f"Failed to extract text from PDF: {result['error']}")
             return f"Error extracting text: {result['error']}"
         
-        return result["text"]
+        # If we got some text, even if there were errors, return it
+        if result["text"].strip():
+            return result["text"]
+        else:
+            return "Error: No text could be extracted from the PDF"
     
     def _extract_text_from_image(self, file_path, timeout=30):
         """Extract text content from image files using OCR with timeout protection"""
@@ -167,6 +197,9 @@ class DocumentProcessor:
             return text
             
         try:
+            # Log the original text length
+            logging.info(f"Preprocessing text of length {len(text)}")
+            
             # Convert to lowercase
             text = text.lower()
             
@@ -182,7 +215,10 @@ class DocumentProcessor:
             tokens = word_tokenize(text)
             filtered_tokens = [word for word in tokens if word not in stop_words]
             
-            return ' '.join(filtered_tokens)
+            processed_text = ' '.join(filtered_tokens)
+            logging.info(f"Preprocessed text length: {len(processed_text)}")
+            
+            return processed_text
         except Exception as e:
             logging.error(f"Error preprocessing text: {e}")
             return text
@@ -191,21 +227,51 @@ class DocumentProcessor:
         """Determine categories for the document based on content"""
         # Handle error messages
         if text.startswith("Error:"):
+            logging.warning(f"Categorizing text with error: {text[:100]}...")
             return ["Error"]
             
         try:
             preprocessed_text = self._preprocess_text(text)
             
-            # If we don't have any documents yet, use a default category
-            if len(self.document_index["documents"]) < 5:
+            # Count documents
+            doc_count = len(self.document_index["documents"])
+            logging.info(f"Current document count: {doc_count}")
+            
+            # For the first few documents, create simple categories based on content
+            if doc_count < 5:
+                logging.info(f"Not enough documents for clustering ({doc_count}/5), creating simple category")
+                
+                # Create a simple category based on document content
+                words = preprocessed_text.split()
+                # Get the most common meaningful words (at least 4 characters)
+                common_words = [word for word in words if len(word) >= 4]
+                
+                if common_words:
+                    # Take up to 3 common words for the category name
+                    from collections import Counter
+                    word_counts = Counter(common_words)
+                    top_words = [word for word, count in word_counts.most_common(3)]
+                    
+                    if top_words:
+                        category_name = f"Topic: {', '.join(top_words)}"
+                        logging.info(f"Created simple category: {category_name}")
+                        
+                        # Add this category if it doesn't exist
+                        if category_name not in self.document_index["categories"]:
+                            self.document_index["categories"].append(category_name)
+                            logging.info(f"Added new category: {category_name}")
+                        
+                        return [category_name]
+                
+                # Fallback to Uncategorized
                 if not self.document_index["categories"]:
                     self.document_index["categories"] = ["Uncategorized"]
                 return ["Uncategorized"]
             
-            # Transform the text using the vectorizer
-            try:
-                # Check if we need to fit the vectorizer first
-                if len(self.document_index["documents"]) == 5:
+            # If we have exactly 5 documents, fit the model
+            if doc_count == 5:
+                logging.info("Reached 5 documents, fitting vectorizer and model")
+                try:
                     # Get all texts from the document index
                     all_texts = [doc["preprocessed_text"] for doc in self.document_index["documents"].values()]
                     # Fit the vectorizer and model
@@ -220,22 +286,38 @@ class DocumentProcessor:
                     
                     # Generate category names based on top terms per cluster
                     self._generate_category_names()
-                
-                # Transform the text and predict cluster
-                text_vector = self.vectorizer.transform([preprocessed_text])
-                cluster = self.model.predict(text_vector)[0]
-                
-                # Return the corresponding category
-                if 0 <= cluster < len(self.document_index["categories"]):
-                    return [self.document_index["categories"][cluster]]
-                else:
+                except Exception as e:
+                    logging.error(f"Error fitting model: {e}")
+                    logging.error(traceback.format_exc())
+            
+            # If we have more than 5 documents and the model is fitted
+            if doc_count >= 5 and hasattr(self.model, 'cluster_centers_'):
+                try:
+                    # Transform the text and predict cluster
+                    text_vector = self.vectorizer.transform([preprocessed_text])
+                    cluster = self.model.predict(text_vector)[0]
+                    logging.info(f"Document assigned to cluster {cluster}")
+                    
+                    # Return the corresponding category
+                    if 0 <= cluster < len(self.document_index["categories"]):
+                        category = self.document_index["categories"][cluster]
+                        logging.info(f"Assigned category: {category}")
+                        return [category]
+                    else:
+                        logging.warning(f"Cluster {cluster} out of range for categories, using Uncategorized")
+                        return ["Uncategorized"]
+                except Exception as e:
+                    logging.error(f"Error predicting cluster: {e}")
+                    logging.error(traceback.format_exc())
                     return ["Uncategorized"]
-                
-            except Exception as e:
-                logging.error(f"Categorization error: {e}")
+            else:
+                # Model not fitted yet, use Uncategorized
+                logging.info("Model not fitted yet, using Uncategorized")
                 return ["Uncategorized"]
+                
         except Exception as e:
             logging.error(f"Error in categorize_text: {e}")
+            logging.error(traceback.format_exc())
             return ["Error"]
     
     def _generate_category_names(self):
@@ -254,9 +336,11 @@ class DocumentProcessor:
                 category_name = f"Category_{i+1}: {', '.join(top_terms)}"
                 categories.append(category_name)
             
+            logging.info(f"Generated categories: {categories}")
             self.document_index["categories"] = categories
         except Exception as e:
             logging.error(f"Error generating category names: {e}")
+            logging.error(traceback.format_exc())
             self.document_index["categories"] = [f"Category_{i+1}" for i in range(self.model.n_clusters)]
     
     def process(self, file_path):
@@ -280,6 +364,10 @@ class DocumentProcessor:
             if not text or (text.startswith("Error:") and len(text) < 100):
                 logging.error(f"No text could be extracted from the document: {file_path}")
                 raise ValueError("No text could be extracted from the document")
+            
+            # Log a sample of the extracted text
+            text_sample = text[:500].replace('\n', ' ').strip()
+            logging.info(f"Extracted text sample: {text_sample}...")
             
             # Preprocess the text
             preprocessed_text = self._preprocess_text(text)
@@ -312,6 +400,7 @@ class DocumentProcessor:
             
         except Exception as e:
             logging.error(f"Error processing document {file_path}: {e}")
+            logging.error(traceback.format_exc())
             # Return a temporary ID and error category
             return doc_id, ["Error: " + str(e)]
     

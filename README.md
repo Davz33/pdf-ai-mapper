@@ -101,21 +101,28 @@ The API will be available at `http://localhost:7860` for both local and Docker u
 
 ## Available Endpoints
 
-   - `POST /upload/`: Upload and process a PDF or image file
-   - `POST /search/`: Search through processed documents
-   - `GET /categories/`: Get all available document categories
+- `POST /upload/`: Upload and process a PDF or image file
+- `POST /search/`: Search through processed documents
+- `GET /categories/`: Get all available document categories
 
 ## API Reference
 
 ### Upload a Document
 
-```
+```text
 POST /upload/
+```
+
+For example, using curl:
+
+```bash
+curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
 ```
 
 **Request Body**: Form data with a file field
 
 **Response**:
+
 ```json
 {
   "status": "success",
@@ -127,11 +134,12 @@ POST /upload/
 
 ### Search Documents
 
-```
+```text
 POST /search/
 ```
 
 **Request Body**:
+
 ```json
 {
   "query": "search query",
@@ -140,6 +148,7 @@ POST /search/
 ```
 
 **Response**:
+
 ```json
 {
   "results": [
@@ -156,11 +165,12 @@ POST /search/
 
 ### Get Categories
 
-```
+```text
 GET /categories/
 ```
 
 **Response**:
+
 ```json
 {
   "categories": ["category1", "category2", "category3"]

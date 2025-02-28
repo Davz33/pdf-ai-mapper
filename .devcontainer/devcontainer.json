@@ -1,0 +1,37 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/python
+{
+	"name": "PDF AI Mapper",
+	
+	// Use Docker Compose for the dev container
+	"dockerComposeFile": "../docker-compose.yml",
+	"service": "pdf-ai-mapper",
+	"workspaceFolder": "/app",
+	
+	// Configure VS Code settings
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python",
+				"ms-python.vscode-pylance"
+			],
+			"settings": {
+				"python.defaultInterpreterPath": "/usr/local/bin/python"
+			}
+		}
+	},
+
+	// Forward the same port as in docker-compose.yml
+	"forwardPorts": [7860],
+	"portsAttributes": {
+		"7860": {
+			"label": "Application",
+			"onAutoForward": "openBrowser"
+		}
+	},
+	
+	// Set the same environment variables as in docker-compose.yml
+	"containerEnv": {
+		"PYTHONUNBUFFERED": "1"
+	}
+}

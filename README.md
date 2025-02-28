@@ -185,6 +185,14 @@ GET /categories/
    - Results can be filtered by categories
    - Relevant snippets are generated to show matching context
 
+## Logging from Running Docker Container
+
+This application will log errors upon API calls, which you can visualize via:
+
+```bash
+docker logs -ft --tail 0 <running-container-name>
+```
+
 ## Getting the GitHub Codespace Docker Image
 
 GitHub Codespaces doesn't provide a direct way to download the exact Docker image it uses. However, the Dockerfile in this project replicates the functionality of the GitHub Codespace by:

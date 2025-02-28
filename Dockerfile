@@ -13,11 +13,13 @@ WORKDIR /app
 COPY . .
 
 # Install pixi and make it available in PATH
-RUN curl -fsSL https://pixi.sh/install.sh | bash && \
-    echo 'export PATH="/root/.pixi/bin:$PATH"' >> ~/.bashrc
-
-# Add pixi to PATH for the current session and install dependencies
+RUN curl -fsSL https://pixi.sh/install.sh | bash
 ENV PATH="/root/.pixi/bin:$PATH"
+
+# Log architecture for debugging
+RUN echo "Running on architecture: $(uname -m)"
+
+# Install dependencies with pixi
 RUN /root/.pixi/bin/pixi install
 
 # Expose port

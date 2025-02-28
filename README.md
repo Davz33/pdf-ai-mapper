@@ -101,9 +101,11 @@ The API will be available at `http://localhost:7860` for both local and Docker u
 
 ## Available Endpoints
 
-- `POST /upload/`: Upload and process a PDF or image file
+- `POST /upload/`: Upload and process a PDF or image file (automatically categorizes documents)
 - `POST /search/`: Search through processed documents
 - `GET /categories/`: Get all available document categories
+- `POST /recategorize/`: Manually trigger recategorization of all documents (optional)
+- `GET /status/`: Check the processing status of all documents
 
 ## API Reference
 
@@ -126,9 +128,9 @@ curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
 ```json
 {
   "status": "success",
-  "message": "File processed successfully",
-  "document_id": "uuid",
-  "categories": ["category1", "category2"]
+  "message": "File uploaded successfully and processing started (categorization will happen automatically)",
+  "document_id": "<uuid>"
+  "categories":["Processing"]
 }
 ```
 
@@ -177,15 +179,56 @@ GET /categories/
 }
 ```
 
-### Force Recategorizazion
+### Check Processing Status
 
-To force recategorization of all documents:
+```text
+GET /status/
+```
+
+This endpoint allows you to check the processing status of all documents in the system.
+
+For example, using curl:
+
+```bash
+curl http://localhost:7860/status/
+```
+
+**Response**:
+
+```json
+{
+  "documents": [
+    {
+      "document_id": "<uuid>",
+      "filename": "document.pdf",
+      "status": "processed",
+      "categories": ["category1", "category2"]
+    },
+    {
+      "document_id": "<uuid>",
+      "filename": "another-document.pdf",
+      "status": "processing",
+      "categories": ["Processing"]
+    }
+  ]
+}
+```
+
+Possible status values:
+
+- `processing`: Document is still being processed
+- `processed`: Document has been fully processed and categorized
+- `error`: An error occurred during processing
+
+### Manual Recategorization
+
+To manually trigger recategorization of all documents:
 
 ```text
 POST /recategorize/
 ```
 
-This endpoint processes all existing documents, applies the improved categorization logic, updates the document index and returns the new categories.
+This endpoint processes all existing documents, applies the categorization logic, updates the document index and returns the new categories. Note that this is typically not needed as categorization happens automatically after each document upload.
 
 ## How It Works
 
@@ -196,14 +239,25 @@ This endpoint processes all existing documents, applies the improved categorizat
    - Extracted text is cleaned and preprocessed
 
 2. **Categorization**:
-   - Documents are categorized using unsupervised K-means clustering
+   - Documents are automatically categorized after upload using unsupervised K-means clustering
    - TF-IDF vectorization is used to represent document content
    - Category names are generated from important terms in each cluster
+   - The categorization process runs in the background after each document is processed
 
 3. **Search**:
    - Search uses a simple but effective relevance scoring system
    - Results can be filtered by categories
    - Relevant snippets are generated to show matching context
+
+## Document Processing Workflow
+
+1. User uploads a file via the `/upload/` endpoint
+2. File is saved and processing begins in the background
+3. Text is extracted from the document using PDF parsing or OCR
+4. Document is added to the search index
+5. Automatic recategorization is triggered for all documents
+6. Categories are updated and saved
+7. The updated categories are available via the `/categories/` endpoint
 
 ## Logging from Running Docker Container
 

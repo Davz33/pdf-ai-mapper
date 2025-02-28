@@ -8,6 +8,7 @@ import traceback
 import time
 import uuid
 import threading
+import json
 
 from document_processor import DocumentProcessor
 from search_engine import SearchEngine
@@ -58,6 +59,47 @@ class SearchQuery(BaseModel):
     query: str
     categories: Optional[List[str]] = None
 
+# Function to recategorize all documents
+def recategorize_all_documents():
+    try:
+        logger.info("Auto-recategorizing all documents after new upload")
+        
+        # Get all documents
+        documents = document_processor.document_index["documents"]
+        doc_count = len(documents)
+        
+        if doc_count == 0:
+            logger.info("No documents to recategorize")
+            return
+            
+        # Process each document
+        updated_count = 0
+        for doc_id, doc in list(documents.items()):
+            try:
+                # Get preprocessed text
+                preprocessed_text = doc["preprocessed_text"]
+                
+                # Recategorize
+                categories = document_processor._categorize_text(preprocessed_text)
+                
+                # Update document
+                documents[doc_id]["categories"] = categories
+                updated_count += 1
+                
+                logger.info(f"Recategorized document {doc_id}: {categories}")
+            except Exception as e:
+                logger.error(f"Error recategorizing document {doc_id}: {str(e)}")
+        
+        # Save updated index
+        with open(document_processor.index_file, 'w') as f:
+            json.dump(document_processor.document_index, f)
+        
+        logger.info(f"Auto-recategorization completed: {updated_count} of {doc_count} documents updated")
+        logger.info(f"Current categories: {document_processor.document_index['categories']}")
+    except Exception as e:
+        logger.error(f"Error during auto-recategorization: {str(e)}")
+        logger.error(traceback.format_exc())
+
 # Function to process document in background
 def process_document_background(file_path, file_name):
     try:
@@ -81,6 +123,9 @@ def process_document_background(file_path, file_name):
         else:
             logger.info(f"Background processing completed successfully for file: {file_name}")
             logger.info(f"Document ID: {doc_id}, Categories: {categories}")
+            
+        # Automatically recategorize all documents
+        recategorize_all_documents()
             
         # Update status endpoint data
         try:
@@ -150,7 +195,7 @@ async def upload_file(file: UploadFile = File(...)):
         # Return success response immediately
         return {
             "status": "success", 
-            "message": "File uploaded successfully and processing started", 
+            "message": "File uploaded successfully and processing started (categorization will happen automatically)", 
             "document_id": doc_id,
             "categories": ["Processing"]
         }
@@ -201,7 +246,7 @@ async def get_categories():
 async def recategorize_documents():
     """Force recategorization of all documents"""
     try:
-        logger.info("Starting recategorization of all documents")
+        logger.info("Starting manual recategorization of all documents")
         
         # Get all documents
         documents = document_processor.document_index["documents"]
@@ -238,7 +283,6 @@ async def recategorize_documents():
         
         # Save updated index
         with open(document_processor.index_file, 'w') as f:
-            import json
             json.dump(document_processor.document_index, f)
         
         return {

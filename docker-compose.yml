@@ -1,12 +1,21 @@
-version: '3'
-
 services:
   pdf-ai-mapper:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: ${DOCKER_PLATFORM:-linux/amd64}  # Default to amd64, but can be overridden
     ports:
       - "7860:7860"
     volumes:
       - ./uploads:/app/uploads
       - ./processed_data:/app/processed_data
+      - ./logs:/app/logs
     environment:
-      - PYTHONUNBUFFERED=1 
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    # Configure logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3" 

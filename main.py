@@ -127,7 +127,7 @@ def recategorize_all_documents():
         logger.error(traceback.format_exc())
 
 # Function to process document in background
-def process_document_background(file_path, file_name):
+def process_document_background(file_path, file_name, doc_id):
     try:
         logger.info(f"Background processing started for file: {file_name}")
         
@@ -141,14 +141,19 @@ def process_document_background(file_path, file_name):
         logger.info(f"Processing file of size: {file_size} bytes")
         
         # Process the document
-        doc_id, categories = document_processor.process(file_path)
+        processed_doc_id, categories = document_processor.process(file_path)
+        
+        # Check if this is a duplicate document (IDs will be different)
+        is_duplicate = processed_doc_id != doc_id
+        if is_duplicate:
+            logger.info(f"Duplicate document detected. Original ID: {processed_doc_id}, Upload ID: {doc_id}")
         
         # Check the results
         if categories and categories[0].startswith("Error:"):
             logger.error(f"Error processing document: {categories[0]}")
         else:
             logger.info(f"Background processing completed successfully for file: {file_name}")
-            logger.info(f"Document ID: {doc_id}, Categories: {categories}")
+            logger.info(f"Document ID: {processed_doc_id}, Categories: {categories}")
             
         # Automatically recategorize all documents
         recategorize_all_documents()
@@ -211,7 +216,7 @@ async def upload_file(file: UploadFile = File(...)):
         # Start processing in a background thread and return immediately
         thread = threading.Thread(
             target=process_document_background,
-            args=(file_path, file.filename)
+            args=(file_path, file.filename, doc_id)
         )
         thread.daemon = True
         thread.start()
@@ -221,7 +226,7 @@ async def upload_file(file: UploadFile = File(...)):
         # Return success response immediately
         return {
             "status": "success", 
-            "message": "File uploaded successfully and processing started (categorization will happen automatically)", 
+            "message": "File uploaded successfully and processing started (categorization will happen automatically, duplicates will be detected)", 
             "document_id": doc_id,
             "categories": ["Processing"]
         }
@@ -272,50 +277,79 @@ async def get_categories():
 async def recategorize():
     """Manually trigger recategorization of all documents"""
     try:
-        logger.info("Starting manual recategorization of all documents")
+        logger.info("Manual recategorization requested")
+        
+        # First, clean up any duplicates
+        duplicates_removed = document_processor.clean_up_duplicates()
+        logger.info(f"Removed {duplicates_removed} duplicate documents")
+        
+        # Then recategorize all documents
         recategorize_all_documents()
-        return {"status": "success", "message": "All documents recategorized"}
+        
+        return {
+            "status": "success", 
+            "message": f"All documents recategorized (removed {duplicates_removed} duplicates)", 
+            "categories": document_processor.get_categories()
+        }
     except Exception as e:
-        logger.error(f"Error during manual recategorization: {str(e)}")
+        logger.error(f"Error in recategorization: {str(e)}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error during recategorization: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error in recategorization: {str(e)}")
 
 @app.post("/recategorize-with-clusters/")
 async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
-    """Manually trigger recategorization with a specific number of clusters"""
+    """Manually trigger recategorization with a custom number of clusters"""
     try:
-        logger.info(f"Starting manual recategorization with {clusters} clusters")
+        logger.info(f"Manual recategorization with {clusters} clusters requested")
+        
+        # First, clean up any duplicates
+        duplicates_removed = document_processor.clean_up_duplicates()
+        logger.info(f"Removed {duplicates_removed} duplicate documents")
         
         # Get all documents
         documents = document_processor.document_index["documents"]
         doc_count = len(documents)
         
+        if doc_count == 0:
+            logger.warning("No documents to recategorize")
+            return {
+                "status": "warning",
+                "message": "No documents to recategorize",
+                "categories": []
+            }
+        
+        # Check if we have enough documents for the requested number of clusters
+        adjusted_clusters = clusters
+        adjustment_message = ""
+        
         if doc_count < 5:
             logger.warning(f"Not enough documents for clustering ({doc_count}/5)")
-            return {"status": "warning", "message": f"Not enough documents for clustering ({doc_count}/5)"}
+            return {
+                "status": "warning",
+                "message": f"Not enough documents for clustering (need at least 5, have {doc_count})",
+                "categories": document_processor.get_categories()
+            }
         
-        # Ensure we don't try to create more clusters than documents
-        if clusters > doc_count:
+        if doc_count < clusters:
             adjusted_clusters = doc_count
-            logger.warning(f"Requested {clusters} clusters but only have {doc_count} documents. Adjusting to {adjusted_clusters} clusters.")
-        else:
-            adjusted_clusters = clusters
+            adjustment_message = f" (adjusted from {clusters} due to document count)"
+            logger.info(f"Adjusted clusters from {clusters} to {adjusted_clusters} due to document count")
         
         # Get all preprocessed texts
         all_texts = [doc["preprocessed_text"] for doc in documents.values()]
         
         # Create a new model with the specified number of clusters
+        document_processor.model = KMeans(n_clusters=adjusted_clusters, random_state=42)
+        
+        # Re-fit the vectorizer and model
         try:
-            logger.info(f"Creating new model with {adjusted_clusters} clusters")
-            document_processor.model = KMeans(n_clusters=adjusted_clusters, random_state=42)
-            
-            # Fit the vectorizer and model
+            logger.info(f"Fitting vectorizer and model with {adjusted_clusters} clusters")
             text_vectors = document_processor.vectorizer.fit_transform(all_texts)
             document_processor.model.fit(text_vectors)
             
             # Generate new category names
             document_processor._generate_category_names()
-            logger.info(f"Regenerated categories with {adjusted_clusters} clusters: {document_processor.document_index['categories']}")
+            logger.info(f"Generated {len(document_processor.document_index['categories'])} categories")
             
             # Save the updated model and vectorizer
             with open(document_processor.model_file, 'wb') as f:
@@ -324,48 +358,22 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
                 pickle.dump(document_processor.vectorizer, f)
                 
             # Recategorize all documents
-            updated_count = 0
-            for doc_id, doc in list(documents.items()):
-                try:
-                    # Get preprocessed text
-                    preprocessed_text = doc["preprocessed_text"]
-                    
-                    # Recategorize
-                    categories = document_processor._categorize_text(preprocessed_text)
-                    
-                    # Update document
-                    documents[doc_id]["categories"] = categories
-                    updated_count += 1
-                    
-                    logger.info(f"Recategorized document {doc_id}: {categories}")
-                except Exception as e:
-                    logger.error(f"Error recategorizing document {doc_id}: {str(e)}")
-            
-            # Save updated index
-            with open(document_processor.index_file, 'w') as f:
-                json.dump(document_processor.document_index, f)
-            
-            message = f"All documents recategorized with {adjusted_clusters} clusters"
-            if adjusted_clusters != clusters:
-                message += f" (adjusted from {clusters} due to document count)"
-                
-            logger.info(f"Recategorization with {adjusted_clusters} clusters completed: {updated_count} of {doc_count} documents updated")
+            recategorize_all_documents()
             
             return {
-                "status": "success", 
-                "message": message,
-                "categories": document_processor.document_index["categories"]
+                "status": "success",
+                "message": f"All documents recategorized with {adjusted_clusters} clusters{adjustment_message} (removed {duplicates_removed} duplicates)",
+                "categories": document_processor.get_categories()
             }
-            
         except Exception as e:
-            logger.error(f"Error creating model with {adjusted_clusters} clusters: {str(e)}")
+            logger.error(f"Error fitting model: {str(e)}")
             logger.error(traceback.format_exc())
-            raise HTTPException(status_code=500, detail=f"Error creating model: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error fitting model: {str(e)}")
             
     except Exception as e:
-        logger.error(f"Error during recategorization with clusters: {str(e)}")
+        logger.error(f"Error in recategorization: {str(e)}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error during recategorization: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error in recategorization: {str(e)}")
 
 # Add a status endpoint to check processing status
 @app.get("/status/")
@@ -403,6 +411,26 @@ async def get_status():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+@app.post("/cleanup-duplicates/")
+async def cleanup_duplicates():
+    """Remove duplicate documents from the index"""
+    try:
+        logger.info("Duplicate cleanup requested")
+        
+        # Clean up duplicates
+        duplicates_removed = document_processor.clean_up_duplicates()
+        logger.info(f"Removed {duplicates_removed} duplicate documents")
+        
+        return {
+            "status": "success", 
+            "message": f"Removed {duplicates_removed} duplicate documents", 
+            "document_count": len(document_processor.document_index["documents"])
+        }
+    except Exception as e:
+        logger.error(f"Error in duplicate cleanup: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error in duplicate cleanup: {str(e)}")
 
 if __name__ == "__main__":
     logger.info("Starting PDF AI Mapper application")

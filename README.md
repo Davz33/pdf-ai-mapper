@@ -104,7 +104,8 @@ The API will be available at `http://localhost:7860` for both local and Docker u
 - `POST /upload/`: Upload and process a PDF or image file (automatically categorizes documents)
 - `POST /search/`: Search through processed documents
 - `GET /categories/`: Get all available document categories
-- `POST /recategorize/`: Manually trigger recategorization of all documents (optional)
+- `POST /recategorize/`: Manually trigger recategorization of all documents (optional, as categorization happens automatically)
+- `POST /recategorize-with-clusters/?clusters=<number>`: Manually trigger recategorization with a custom number of clusters
 - `GET /status/`: Check the processing status of all documents
 
 ## API Reference
@@ -129,8 +130,8 @@ curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
 {
   "status": "success",
   "message": "File uploaded successfully and processing started (categorization will happen automatically)",
-  "document_id": "<uuid>"
-  "categories":["Processing"]
+  "document_id": "<uuid>",
+  "categories": ["Processing"]
 }
 ```
 
@@ -202,7 +203,7 @@ curl http://localhost:7860/status/
       "document_id": "<uuid>",
       "filename": "document.pdf",
       "status": "processed",
-      "categories": ["category1", "category2"]
+      "categories": ["<Cagegory naming e.g., Document: ai, data, industries>: <category 1>,<category 2>,<category 3>,..."]
     },
     {
       "document_id": "<uuid>",
@@ -230,6 +231,31 @@ POST /recategorize/
 
 This endpoint processes all existing documents, applies the categorization logic, updates the document index and returns the new categories. Note that this is typically not needed as categorization happens automatically after each document upload.
 
+### Custom Recategorization with Specific Cluster Count
+
+To manually trigger recategorization with a custom number of clusters:
+
+```text
+POST /recategorize-with-clusters/?clusters=10
+```
+
+This endpoint allows you to specify how many distinct categories you want the system to create. The `clusters` parameter can be set between 2 and 20, with a default of 8 if not specified. If the number of clusters exceeds the number of documents, the system will automatically adjust the cluster count to match the document count.
+
+**Request Parameters**:
+- `clusters`: Integer between 2 and 20 (default: 8)
+
+**Response**:
+
+```json
+{
+  "status": "success",
+  "message": "All documents recategorized",
+  "categories": ["Document: ai, data, industries", "Report: review, time, problem", ...]
+}
+```
+
+This is useful when you want more granular categories (higher number) or broader categories (lower number).
+
 ## How It Works
 
 1. **Document Processing**:
@@ -242,7 +268,11 @@ This endpoint processes all existing documents, applies the categorization logic
    - Documents are automatically categorized after upload using unsupervised K-means clustering
    - TF-IDF vectorization is used to represent document content
    - Category names are generated from important terms in each cluster
+   - Categories use descriptive prefixes (Document, Report, Analysis, etc.) for better readability
+   - The system ensures categories are unique and descriptive
+   - By default, the system creates 8 distinct categories (can be customized)
    - The categorization process runs in the background after each document is processed
+   - The system automatically adjusts the number of clusters if there are fewer documents than requested clusters
 
 3. **Search**:
    - Search uses a simple but effective relevance scoring system
@@ -256,8 +286,9 @@ This endpoint processes all existing documents, applies the categorization logic
 3. Text is extracted from the document using PDF parsing or OCR
 4. Document is added to the search index
 5. Automatic recategorization is triggered for all documents
-6. Categories are updated and saved
+6. Categories are updated and saved with descriptive names
 7. The updated categories are available via the `/categories/` endpoint
+8. Document status can be checked via the `/status/` endpoint
 
 ## Logging from Running Docker Container
 

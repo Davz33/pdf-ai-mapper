@@ -8,7 +8,7 @@ services:
       - "7860:7860"
     volumes:
       - ./uploads:/app/uploads
-      - ./processed:/app/processed
+      - ./processed_data:/app/processed_data
       - ./data:/app/data
       - ./logs:/app/logs
     environment:

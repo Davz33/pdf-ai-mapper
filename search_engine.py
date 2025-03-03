@@ -71,12 +71,20 @@ class SearchEngine:
             return []
         
         results = []
+        content_hashes_seen = set()  # Track content hashes to avoid duplicates
         
         # Search through all documents
         for doc_id, doc_data in self.document_index["documents"].items():
             # Skip if category filter is applied and document doesn't match
             if categories and not any(cat in doc_data["categories"] for cat in categories):
                 continue
+            
+            # Skip duplicate content (if content_hash exists)
+            content_hash = doc_data.get("content_hash")
+            if content_hash:
+                if content_hash in content_hashes_seen:
+                    continue
+                content_hashes_seen.add(content_hash)
             
             # Calculate relevance score
             score = self._calculate_relevance(query_tokens, doc_data["full_text"])

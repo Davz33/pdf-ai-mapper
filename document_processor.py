@@ -79,7 +79,7 @@ class DocumentProcessor:
                     max_features=1000,
                     stop_words='english'
                 )
-                self.model = KMeans(n_clusters=5, random_state=42)
+                self.model = KMeans(n_clusters=8, random_state=42)
                 logging.info("Created new categorization model")
         except Exception as e:
             logging.error(f"Error initializing model: {e}")
@@ -88,7 +88,7 @@ class DocumentProcessor:
                 max_features=1000,
                 stop_words='english'
             )
-            self.model = KMeans(n_clusters=5, random_state=42)
+            self.model = KMeans(n_clusters=8, random_state=42)
     
     def _extract_text_from_pdf(self, file_path, timeout=120):
         """Extract text content from PDF files with timeout protection"""
@@ -326,14 +326,42 @@ class DocumentProcessor:
             feature_names = self.vectorizer.get_feature_names_out()
             cluster_centers = self.model.cluster_centers_
             
-            categories = []
+            # Get top terms for each cluster
+            cluster_terms = {}
             for i in range(len(cluster_centers)):
-                # Get the indices of the top terms for this cluster
-                top_term_indices = cluster_centers[i].argsort()[-3:][::-1]
+                # Get the indices of the top terms for this cluster (increased from 3 to 5)
+                top_term_indices = cluster_centers[i].argsort()[-5:][::-1]
                 # Get the actual terms
                 top_terms = [feature_names[idx] for idx in top_term_indices if idx < len(feature_names)]
-                # Create category name
-                category_name = f"Category_{i+1}: {', '.join(top_terms)}"
+                cluster_terms[i] = top_terms
+            
+            # Check for duplicate top terms across clusters and adjust
+            all_category_names = set()
+            categories = []
+            
+            for i, terms in cluster_terms.items():
+                # Create a more descriptive prefix based on the domain
+                domain_prefixes = ["Document", "Report", "Analysis", "Research", "Paper", 
+                                  "Publication", "Article", "Study", "Review", "Guide"]
+                
+                # Select top 3 terms that are most distinctive
+                selected_terms = terms[:3]
+                
+                # Create a base category name
+                base_name = f"{domain_prefixes[i % len(domain_prefixes)]}: {', '.join(selected_terms)}"
+                
+                # Ensure uniqueness
+                category_name = base_name
+                counter = 1
+                while category_name in all_category_names:
+                    # If duplicate, add another term or increment counter
+                    if len(terms) > 3 and counter <= len(terms) - 3:
+                        category_name = f"{domain_prefixes[i % len(domain_prefixes)]}: {', '.join(selected_terms + [terms[2 + counter]])}"
+                    else:
+                        category_name = f"{base_name} (Group {counter})"
+                    counter += 1
+                
+                all_category_names.add(category_name)
                 categories.append(category_name)
             
             logging.info(f"Generated categories: {categories}")
@@ -341,7 +369,11 @@ class DocumentProcessor:
         except Exception as e:
             logging.error(f"Error generating category names: {e}")
             logging.error(traceback.format_exc())
-            self.document_index["categories"] = [f"Category_{i+1}" for i in range(self.model.n_clusters)]
+            # Create more descriptive default categories
+            prefixes = ["Document", "Report", "Analysis", "Research", "Paper", 
+                       "Publication", "Article", "Study"]
+            self.document_index["categories"] = [f"{prefixes[i % len(prefixes)]} Group {i+1}" 
+                                               for i in range(self.model.n_clusters)]
     
     def process(self, file_path):
         """Process a document: OCR, categorize, and index it"""

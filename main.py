@@ -1,6 +1,6 @@
 import os
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -9,6 +9,8 @@ import time
 import uuid
 import threading
 import json
+import pickle
+from sklearn.cluster import KMeans
 
 from document_processor import DocumentProcessor
 from search_engine import SearchEngine
@@ -71,6 +73,30 @@ def recategorize_all_documents():
         if doc_count == 0:
             logger.info("No documents to recategorize")
             return
+        
+        # Check if we have enough documents to regenerate categories
+        if doc_count >= 5:
+            # Get all preprocessed texts
+            all_texts = [doc["preprocessed_text"] for doc in documents.values()]
+            
+            # Re-fit the vectorizer and model to ensure fresh categorization
+            try:
+                logger.info("Re-fitting vectorizer and model with all documents")
+                text_vectors = document_processor.vectorizer.fit_transform(all_texts)
+                document_processor.model.fit(text_vectors)
+                
+                # Generate new category names
+                document_processor._generate_category_names()
+                logger.info(f"Regenerated categories: {document_processor.document_index['categories']}")
+                
+                # Save the updated model and vectorizer
+                with open(document_processor.model_file, 'wb') as f:
+                    pickle.dump(document_processor.model, f)
+                with open(document_processor.vectorizer_file, 'wb') as f:
+                    pickle.dump(document_processor.vectorizer, f)
+            except Exception as e:
+                logger.error(f"Error re-fitting model: {str(e)}")
+                logger.error(traceback.format_exc())
             
         # Process each document
         updated_count = 0
@@ -243,55 +269,101 @@ async def get_categories():
         raise HTTPException(status_code=500, detail=f"Error retrieving categories: {str(e)}")
 
 @app.post("/recategorize/")
-async def recategorize_documents():
-    """Force recategorization of all documents"""
+async def recategorize():
+    """Manually trigger recategorization of all documents"""
     try:
         logger.info("Starting manual recategorization of all documents")
+        recategorize_all_documents()
+        return {"status": "success", "message": "All documents recategorized"}
+    except Exception as e:
+        logger.error(f"Error during manual recategorization: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error during recategorization: {str(e)}")
+
+@app.post("/recategorize-with-clusters/")
+async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
+    """Manually trigger recategorization with a specific number of clusters"""
+    try:
+        logger.info(f"Starting manual recategorization with {clusters} clusters")
         
         # Get all documents
         documents = document_processor.document_index["documents"]
         doc_count = len(documents)
         
-        if doc_count == 0:
-            return {"status": "success", "message": "No documents to recategorize"}
+        if doc_count < 5:
+            logger.warning(f"Not enough documents for clustering ({doc_count}/5)")
+            return {"status": "warning", "message": f"Not enough documents for clustering ({doc_count}/5)"}
+        
+        # Ensure we don't try to create more clusters than documents
+        if clusters > doc_count:
+            adjusted_clusters = doc_count
+            logger.warning(f"Requested {clusters} clusters but only have {doc_count} documents. Adjusting to {adjusted_clusters} clusters.")
+        else:
+            adjusted_clusters = clusters
+        
+        # Get all preprocessed texts
+        all_texts = [doc["preprocessed_text"] for doc in documents.values()]
+        
+        # Create a new model with the specified number of clusters
+        try:
+            logger.info(f"Creating new model with {adjusted_clusters} clusters")
+            document_processor.model = KMeans(n_clusters=adjusted_clusters, random_state=42)
             
-        # Process each document
-        updated_count = 0
-        for doc_id, doc in list(documents.items()):
-            try:
-                # Get the document path
-                file_path = doc["path"]
+            # Fit the vectorizer and model
+            text_vectors = document_processor.vectorizer.fit_transform(all_texts)
+            document_processor.model.fit(text_vectors)
+            
+            # Generate new category names
+            document_processor._generate_category_names()
+            logger.info(f"Regenerated categories with {adjusted_clusters} clusters: {document_processor.document_index['categories']}")
+            
+            # Save the updated model and vectorizer
+            with open(document_processor.model_file, 'wb') as f:
+                pickle.dump(document_processor.model, f)
+            with open(document_processor.vectorizer_file, 'wb') as f:
+                pickle.dump(document_processor.vectorizer, f)
                 
-                # Check if file exists
-                if not os.path.exists(file_path):
-                    logger.warning(f"Document file not found: {file_path}")
-                    continue
+            # Recategorize all documents
+            updated_count = 0
+            for doc_id, doc in list(documents.items()):
+                try:
+                    # Get preprocessed text
+                    preprocessed_text = doc["preprocessed_text"]
+                    
+                    # Recategorize
+                    categories = document_processor._categorize_text(preprocessed_text)
+                    
+                    # Update document
+                    documents[doc_id]["categories"] = categories
+                    updated_count += 1
+                    
+                    logger.info(f"Recategorized document {doc_id}: {categories}")
+                except Exception as e:
+                    logger.error(f"Error recategorizing document {doc_id}: {str(e)}")
+            
+            # Save updated index
+            with open(document_processor.index_file, 'w') as f:
+                json.dump(document_processor.document_index, f)
+            
+            message = f"All documents recategorized with {adjusted_clusters} clusters"
+            if adjusted_clusters != clusters:
+                message += f" (adjusted from {clusters} due to document count)"
                 
-                # Get preprocessed text
-                preprocessed_text = doc["preprocessed_text"]
-                
-                # Recategorize
-                categories = document_processor._categorize_text(preprocessed_text)
-                
-                # Update document
-                documents[doc_id]["categories"] = categories
-                updated_count += 1
-                
-                logger.info(f"Recategorized document {doc_id}: {categories}")
-            except Exception as e:
-                logger.error(f"Error recategorizing document {doc_id}: {str(e)}")
-        
-        # Save updated index
-        with open(document_processor.index_file, 'w') as f:
-            json.dump(document_processor.document_index, f)
-        
-        return {
-            "status": "success",
-            "message": f"Recategorized {updated_count} of {doc_count} documents",
-            "categories": document_processor.document_index["categories"]
-        }
+            logger.info(f"Recategorization with {adjusted_clusters} clusters completed: {updated_count} of {doc_count} documents updated")
+            
+            return {
+                "status": "success", 
+                "message": message,
+                "categories": document_processor.document_index["categories"]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating model with {adjusted_clusters} clusters: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"Error creating model: {str(e)}")
+            
     except Exception as e:
-        logger.error(f"Error during recategorization: {str(e)}")
+        logger.error(f"Error during recategorization with clusters: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error during recategorization: {str(e)}")
 

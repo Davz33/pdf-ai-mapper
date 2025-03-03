@@ -9,6 +9,7 @@ A tool for processing, categorizing, and searching through PDF documents and ima
 - Automatically categorize documents based on content
 - Search through processed documents
 - Filter search results by categories
+- Detect and handle duplicate documents
 
 ## Requirements
 
@@ -104,7 +105,9 @@ The API will be available at `http://localhost:7860` for both local and Docker u
 - `POST /upload/`: Upload and process a PDF or image file (automatically categorizes documents)
 - `POST /search/`: Search through processed documents
 - `GET /categories/`: Get all available document categories
-- `POST /recategorize/`: Manually trigger recategorization of all documents (optional)
+- `POST /recategorize/`: Manually trigger recategorization of all documents (optional, as categorization happens automatically)
+- `POST /recategorize-with-clusters/?clusters=<number>`: Manually trigger recategorization with a custom number of clusters
+- `POST /cleanup-duplicates/`: Remove duplicate documents from the index
 - `GET /status/`: Check the processing status of all documents
 
 ## API Reference
@@ -128,9 +131,9 @@ curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
 ```json
 {
   "status": "success",
-  "message": "File uploaded successfully and processing started (categorization will happen automatically)",
-  "document_id": "<uuid>"
-  "categories":["Processing"]
+  "message": "File uploaded successfully and processing started (categorization will happen automatically, duplicates will be detected)",
+  "document_id": "<uuid>",
+  "categories": ["Processing"]
 }
 ```
 
@@ -140,12 +143,26 @@ curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
 POST /search/
 ```
 
+This endpoint allows you to search through all processed documents using a text query. You can optionally filter results by specific categories.
+
+For example, using curl:
+
+```bash
+curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "ai"}'
+```
+
+To filter by category:
+
+```bash
+curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "ai", "categories": ["Analysis: ai, data, industries"]}'
+```
+
 **Request Body**:
 
 ```json
 {
   "query": "search query",
-  "categories": ["optional_category1"]
+  "categories": ["optional_category1"]  // Optional array of categories to filter by
 }
 ```
 
@@ -157,13 +174,17 @@ POST /search/
     {
       "document_id": "uuid",
       "filename": "document.pdf",
-      "categories": ["category1"],
-      "score": 10,
-      "snippet": "...matching text snippet..."
+      "categories": ["Document: ai, data, industries"],
+      "score": 684,
+      "snippet": "...matching text snippet with highlighted search terms..."
     }
   ]
 }
 ```
+
+The results are sorted by relevance score, with higher scores indicating better matches. The snippet shows the context where the search terms appear in the document.
+
+**Note:** The system automatically detects and handles duplicate documents. If the same document is uploaded multiple times, the system will recognize it and use the existing document ID, preventing duplicate entries in search results.
 
 ### Get Categories
 
@@ -171,13 +192,28 @@ POST /search/
 GET /categories/
 ```
 
+This endpoint returns all available document categories in the system.
+
+For example, using curl:
+
+```bash
+curl http://localhost:7860/categories/
+```
+
 **Response**:
 
 ```json
 {
-  "categories": ["category1", "category2", "category3"]
+  "categories": [
+    "Document: ai, data, industries",
+    "Report: review, time, problem",
+    "Analysis: ai, data, industries",
+    "Research: ai, data, industries"
+  ]
 }
 ```
+
+Each category has a descriptive prefix (Document, Report, Analysis, etc.) followed by the most important terms that characterize that category.
 
 ### Check Processing Status
 
@@ -202,7 +238,7 @@ curl http://localhost:7860/status/
       "document_id": "<uuid>",
       "filename": "document.pdf",
       "status": "processed",
-      "categories": ["category1", "category2"]
+      "categories": ["<Cagegory naming e.g., Document: ai, data, industries>: <category 1>,<category 2>,<category 3>,..."]
     },
     {
       "document_id": "<uuid>",
@@ -230,6 +266,59 @@ POST /recategorize/
 
 This endpoint processes all existing documents, applies the categorization logic, updates the document index and returns the new categories. Note that this is typically not needed as categorization happens automatically after each document upload.
 
+### Custom Recategorization with Specific Cluster Count
+
+To manually trigger recategorization with a custom number of clusters:
+
+```text
+POST /recategorize-with-clusters/?clusters=10
+```
+
+This endpoint allows you to specify how many distinct categories you want the system to create. The `clusters` parameter can be set between 2 and 20, with a default of 8 if not specified. If the number of clusters exceeds the number of documents, the system will automatically adjust the cluster count to match the document count.
+
+**Request Parameters**:
+- `clusters`: Integer between 2 and 20 (default: 8)
+
+**Response**:
+
+```json
+{
+  "status": "success",
+  "message": "All documents recategorized",
+  "categories": ["Document: ai, data, industries", "Report: review, time, problem", ...]
+}
+```
+
+This is useful when you want more granular categories (higher number) or broader categories (lower number).
+
+### Cleanup Duplicates
+
+To remove duplicate documents from the index:
+
+```text
+POST /cleanup-duplicates/
+```
+
+This endpoint identifies and removes duplicate documents based on content hash, keeping only one copy of each unique document.
+
+For example, using curl:
+
+```bash
+curl -X POST http://localhost:7860/cleanup-duplicates/
+```
+
+**Response**:
+
+```json
+{
+  "status": "success",
+  "message": "Removed 3 duplicate documents",
+  "document_count": 5
+}
+```
+
+This is useful for cleaning up the document index if the same documents were uploaded multiple times before duplicate detection was implemented.
+
 ## How It Works
 
 1. **Document Processing**:
@@ -237,17 +326,29 @@ This endpoint processes all existing documents, applies the categorization logic
    - If text extraction fails or is limited, PDF pages are converted to images for OCR
    - Images are processed using Tesseract OCR
    - Extracted text is cleaned and preprocessed
+   - Content hashing is used to detect duplicate documents
 
 2. **Categorization**:
    - Documents are automatically categorized after upload using unsupervised K-means clustering
    - TF-IDF vectorization is used to represent document content
    - Category names are generated from important terms in each cluster
+   - Categories use descriptive prefixes (Document, Report, Analysis, etc.) for better readability
+   - The system ensures categories are unique and descriptive
+   - By default, the system creates 8 distinct categories (can be customized)
    - The categorization process runs in the background after each document is processed
+   - The system automatically adjusts the number of clusters if there are fewer documents than requested clusters
 
 3. **Search**:
    - Search uses a simple but effective relevance scoring system
    - Results can be filtered by categories
    - Relevant snippets are generated to show matching context
+   - Duplicate documents are automatically filtered from search results
+
+4. **Duplicate Detection**:
+   - The system calculates a content hash for each document
+   - When a new document is uploaded, it's compared against existing documents
+   - If a duplicate is found (by filename or content), the existing document is used
+   - This prevents duplicate entries in the document index and search results
 
 ## Document Processing Workflow
 
@@ -256,8 +357,9 @@ This endpoint processes all existing documents, applies the categorization logic
 3. Text is extracted from the document using PDF parsing or OCR
 4. Document is added to the search index
 5. Automatic recategorization is triggered for all documents
-6. Categories are updated and saved
+6. Categories are updated and saved with descriptive names
 7. The updated categories are available via the `/categories/` endpoint
+8. Document status can be checked via the `/status/` endpoint
 
 ## Logging from Running Docker Container
 
@@ -276,3 +378,22 @@ GitHub Codespaces doesn't provide a direct way to download the exact Docker imag
 3. Setting up pixi in the same way as the devcontainer.json
 
 This approach ensures that the Docker environment closely matches the GitHub Codespace environment.
+
+## Known Limitations and Future Improvements
+
+### Duplicate Document Handling
+
+The system now implements duplicate detection and handling:
+
+- Documents are identified by both filename and content hash
+- If a duplicate document is uploaded, the system uses the existing document ID
+- Search results automatically filter out duplicate content
+- This prevents redundant processing and improves search result quality
+
+### Other Planned Enhancements
+
+- Improved error handling for malformed documents
+- Support for more document formats (e.g., DOCX, XLSX)
+- Enhanced search with semantic capabilities
+- User authentication and document ownership
+- Web interface for easier interaction

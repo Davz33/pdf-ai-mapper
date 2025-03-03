@@ -17,6 +17,7 @@ import time
 import threading
 import logging
 import traceback
+import hashlib
 
 # Download necessary NLTK data
 try:
@@ -79,7 +80,7 @@ class DocumentProcessor:
                     max_features=1000,
                     stop_words='english'
                 )
-                self.model = KMeans(n_clusters=5, random_state=42)
+                self.model = KMeans(n_clusters=8, random_state=42)
                 logging.info("Created new categorization model")
         except Exception as e:
             logging.error(f"Error initializing model: {e}")
@@ -88,7 +89,7 @@ class DocumentProcessor:
                 max_features=1000,
                 stop_words='english'
             )
-            self.model = KMeans(n_clusters=5, random_state=42)
+            self.model = KMeans(n_clusters=8, random_state=42)
     
     def _extract_text_from_pdf(self, file_path, timeout=120):
         """Extract text content from PDF files with timeout protection"""
@@ -326,14 +327,42 @@ class DocumentProcessor:
             feature_names = self.vectorizer.get_feature_names_out()
             cluster_centers = self.model.cluster_centers_
             
-            categories = []
+            # Get top terms for each cluster
+            cluster_terms = {}
             for i in range(len(cluster_centers)):
-                # Get the indices of the top terms for this cluster
-                top_term_indices = cluster_centers[i].argsort()[-3:][::-1]
+                # Get the indices of the top terms for this cluster (increased from 3 to 5)
+                top_term_indices = cluster_centers[i].argsort()[-5:][::-1]
                 # Get the actual terms
                 top_terms = [feature_names[idx] for idx in top_term_indices if idx < len(feature_names)]
-                # Create category name
-                category_name = f"Category_{i+1}: {', '.join(top_terms)}"
+                cluster_terms[i] = top_terms
+            
+            # Check for duplicate top terms across clusters and adjust
+            all_category_names = set()
+            categories = []
+            
+            for i, terms in cluster_terms.items():
+                # Create a more descriptive prefix based on the domain
+                domain_prefixes = ["Document", "Report", "Analysis", "Research", "Paper", 
+                                  "Publication", "Article", "Study", "Review", "Guide"]
+                
+                # Select top 3 terms that are most distinctive
+                selected_terms = terms[:3]
+                
+                # Create a base category name
+                base_name = f"{domain_prefixes[i % len(domain_prefixes)]}: {', '.join(selected_terms)}"
+                
+                # Ensure uniqueness
+                category_name = base_name
+                counter = 1
+                while category_name in all_category_names:
+                    # If duplicate, add another term or increment counter
+                    if len(terms) > 3 and counter <= len(terms) - 3:
+                        category_name = f"{domain_prefixes[i % len(domain_prefixes)]}: {', '.join(selected_terms + [terms[2 + counter]])}"
+                    else:
+                        category_name = f"{base_name} (Group {counter})"
+                    counter += 1
+                
+                all_category_names.add(category_name)
                 categories.append(category_name)
             
             logging.info(f"Generated categories: {categories}")
@@ -341,7 +370,91 @@ class DocumentProcessor:
         except Exception as e:
             logging.error(f"Error generating category names: {e}")
             logging.error(traceback.format_exc())
-            self.document_index["categories"] = [f"Category_{i+1}" for i in range(self.model.n_clusters)]
+            # Create more descriptive default categories
+            prefixes = ["Document", "Report", "Analysis", "Research", "Paper", 
+                       "Publication", "Article", "Study"]
+            self.document_index["categories"] = [f"{prefixes[i % len(prefixes)]} Group {i+1}" 
+                                               for i in range(self.model.n_clusters)]
+    
+    def _calculate_content_hash(self, text):
+        """Calculate a hash of the document content for duplicate detection"""
+        # Use a prefix of the text to create a hash
+        # This allows for minor differences while still catching duplicates
+        text_for_hash = text[:5000].strip().lower()
+        return hashlib.md5(text_for_hash.encode('utf-8')).hexdigest()
+    
+    def _find_duplicate_document(self, file_name, text):
+        """
+        Check if a document with the same filename or similar content already exists
+        Returns the document ID if a duplicate is found, None otherwise
+        """
+        if not text:
+            return None
+            
+        # Calculate content hash
+        content_hash = self._calculate_content_hash(text)
+        logging.info(f"Content hash for potential duplicate check: {content_hash}")
+        
+        # First check for exact filename match
+        for doc_id, doc in self.document_index["documents"].items():
+            if doc["filename"] == file_name:
+                logging.info(f"Found duplicate by filename: {file_name}")
+                return doc_id
+        
+        # Then check for content similarity
+        for doc_id, doc in self.document_index["documents"].items():
+            if "content_hash" in doc and doc["content_hash"] == content_hash:
+                logging.info(f"Found duplicate by content hash: {content_hash}")
+                return doc_id
+            
+        # No duplicate found
+        return None
+    
+    def clean_up_duplicates(self):
+        """
+        Clean up duplicate documents in the index
+        Returns the number of duplicates removed
+        """
+        logging.info("Starting duplicate cleanup process")
+        
+        # First, ensure all documents have a content hash
+        for doc_id, doc in list(self.document_index["documents"].items()):
+            if "content_hash" not in doc and "full_text" in doc:
+                doc["content_hash"] = self._calculate_content_hash(doc["full_text"])
+                logging.info(f"Added content hash for document {doc_id}")
+        
+        # Track documents by content hash
+        docs_by_hash = {}
+        duplicates_to_remove = []
+        
+        # First pass: identify duplicates
+        for doc_id, doc in self.document_index["documents"].items():
+            if "content_hash" not in doc:
+                logging.warning(f"Document {doc_id} has no content hash, skipping")
+                continue
+                
+            content_hash = doc["content_hash"]
+            
+            if content_hash in docs_by_hash:
+                # This is a duplicate
+                duplicates_to_remove.append(doc_id)
+                logging.info(f"Identified duplicate document: {doc_id} (same as {docs_by_hash[content_hash]})")
+            else:
+                # This is the first occurrence of this hash
+                docs_by_hash[content_hash] = doc_id
+        
+        # Second pass: remove duplicates
+        for doc_id in duplicates_to_remove:
+            del self.document_index["documents"][doc_id]
+            logging.info(f"Removed duplicate document: {doc_id}")
+        
+        # Save the updated index
+        if duplicates_to_remove:
+            with open(self.index_file, 'w') as f:
+                json.dump(self.document_index, f)
+            logging.info(f"Saved document index after removing {len(duplicates_to_remove)} duplicates")
+        
+        return len(duplicates_to_remove)
     
     def process(self, file_path):
         """Process a document: OCR, categorize, and index it"""
@@ -365,6 +478,23 @@ class DocumentProcessor:
                 logging.error(f"No text could be extracted from the document: {file_path}")
                 raise ValueError("No text could be extracted from the document")
             
+            # Check for duplicate documents
+            file_name = os.path.basename(file_path)
+            existing_doc_id = self._find_duplicate_document(file_name, text)
+            
+            if existing_doc_id:
+                logging.info(f"Duplicate document detected. Using existing document ID: {existing_doc_id}")
+                
+                # Update the existing document with new path if needed
+                self.document_index["documents"][existing_doc_id]["path"] = file_path
+                
+                # Save updated index
+                with open(self.index_file, 'w') as f:
+                    json.dump(self.document_index, f)
+                
+                # Return the existing document ID and its categories
+                return existing_doc_id, self.document_index["documents"][existing_doc_id]["categories"]
+            
             # Log a sample of the extracted text
             text_sample = text[:500].replace('\n', ' ').strip()
             logging.info(f"Extracted text sample: {text_sample}...")
@@ -377,15 +507,18 @@ class DocumentProcessor:
             categories = self._categorize_text(preprocessed_text)
             logging.info(f"Categorization completed in {time.time() - start_time:.2f}s")
             
+            # Calculate content hash for future duplicate detection
+            content_hash = self._calculate_content_hash(text)
+            
             # Store document data
-            file_name = os.path.basename(file_path)
             document_data = {
                 "id": doc_id,
                 "filename": file_name,
                 "path": file_path,
                 "categories": categories,
                 "preprocessed_text": preprocessed_text,
-                "full_text": text
+                "full_text": text,
+                "content_hash": content_hash
             }
             
             # Add to document index

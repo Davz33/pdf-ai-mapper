@@ -10,6 +10,7 @@ A tool for processing, categorizing, and searching through PDF documents and ima
 - Search through processed documents
 - Filter search results by categories
 - Detect and handle duplicate documents
+- Support for structured categories with metadata for enterprise applications
 
 ## Requirements
 
@@ -108,6 +109,7 @@ The API will be available at `http://localhost:7860` for both local and Docker u
 - `POST /recategorize/`: Manually trigger recategorization of all documents (optional, as categorization happens automatically)
 - `POST /recategorize-with-clusters/?clusters=<number>`: Manually trigger recategorization with a custom number of clusters
 - `POST /cleanup-duplicates/`: Remove duplicate documents from the index
+- `POST /generate-structured-categories/`: Generate structured categories from existing categories
 - `GET /status/`: Check the processing status of all documents
 
 ## API Reference
@@ -121,7 +123,7 @@ POST /upload/
 For example, using curl:
 
 ```bash
-curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
+curl -X POST http://localhost:7860/upload/ -F "file=@<path_to_file.pdf>"
 ```
 
 **Request Body**: Form data with a file field
@@ -143,26 +145,40 @@ curl -X POST http://localhost:7860/upload/ -F "file=@<path-to-pdf.pdf>"
 POST /search/
 ```
 
-This endpoint allows you to search through all processed documents using a text query. You can optionally filter results by specific categories.
+This endpoint allows you to search through all processed documents using a text query. You can optionally filter results by specific categories, category types, or keywords.
 
 For example, using curl:
 
 ```bash
-curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "ai"}'
+curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "<search_query_text>"}'
 ```
 
 To filter by category:
 
 ```bash
-curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "ai", "categories": ["Analysis: ai, data, industries"]}'
+curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "<search_query_text>", "categories": ["<category_name_1>", "<category_name_2>"]}'
+```
+
+To filter by category type:
+
+```bash
+curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "<search_query_text>", "category_types": ["<category_type_1>", "<category_type_2>"]}'
+```
+
+To filter by keywords:
+
+```bash
+curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -d '{"query": "<search_query_text>", "keywords": ["<keyword_1>", "<keyword_2>"]}'
 ```
 
 **Request Body**:
 
 ```json
 {
-  "query": "search query",
-  "categories": ["optional_category1"]  // Optional array of categories to filter by
+  "query": "<search_query_text>",
+  "categories": ["<optional_category_name_1>", "<optional_category_name_2>"],  // Optional array of categories to filter by
+  "category_types": ["<optional_category_type_1>", "<optional_category_type_2>"],  // Optional array of category types to filter by
+  "keywords": ["<optional_keyword_1>", "<optional_keyword_2>"]  // Optional array of keywords to filter by
 }
 ```
 
@@ -172,17 +188,30 @@ curl -X POST http://localhost:7860/search/ -H "Content-Type: application/json" -
 {
   "results": [
     {
-      "document_id": "uuid",
-      "filename": "document.pdf",
-      "categories": ["Document: ai, data, industries"],
-      "score": 684,
+      "document_id": "<uuid>",
+      "filename": "<original_filename.pdf>",
+      "categories": ["<category_type>: <keyword_1>, <keyword_2>, <keyword_3>"],
+      "structured_categories": [
+        {
+          "id": "<cat-XXX>",
+          "type": "<category_type>",
+          "keywords": ["<keyword_1>", "<keyword_2>", "<keyword_3>"],
+          "display_name": "<category_type>: <keyword_1>, <keyword_2>, <keyword_3>",
+          "created_at": "<ISO8601_timestamp>"
+        }
+      ],
+      "score": <relevance_score_0_to_1000>,
       "snippet": "...matching text snippet with highlighted search terms..."
     }
-  ]
+  ],
+  "available_filters": {
+    "category_types": ["<category_type_1>", "<category_type_2>", "<category_type_3>"],
+    "keywords": ["<keyword_1>", "<keyword_2>", "<keyword_3>"]
+  }
 }
 ```
 
-The results are sorted by relevance score, with higher scores indicating better matches. The snippet shows the context where the search terms appear in the document.
+The results are sorted by relevance score, with higher scores indicating better matches. The snippet shows the context where the search terms appear in the document. The `available_filters` section provides all available category types and keywords that can be used for filtering in subsequent searches.
 
 **Note:** The system automatically detects and handles duplicate documents. If the same document is uploaded multiple times, the system will recognize it and use the existing document ID, preventing duplicate entries in search results.
 
@@ -192,7 +221,7 @@ The results are sorted by relevance score, with higher scores indicating better 
 GET /categories/
 ```
 
-This endpoint returns all available document categories in the system.
+This endpoint returns all available document categories in the system as structured categories.
 
 For example, using curl:
 
@@ -204,16 +233,26 @@ curl http://localhost:7860/categories/
 
 ```json
 {
-  "categories": [
-    "Document: ai, data, industries",
-    "Report: review, time, problem",
-    "Analysis: ai, data, industries",
-    "Research: ai, data, industries"
+  "structured_categories": [
+    {
+      "id": "<cat-XXX_format>",
+      "type": "<category_type_1>",
+      "keywords": ["<keyword_1>", "<keyword_2>", "<keyword_3>"],
+      "display_name": "<category_type_1>: <keyword_1>, <keyword_2>, <keyword_3>",
+      "created_at": "<ISO8601_timestamp>"
+    },
+    {
+      "id": "<cat-XXX_format>",
+      "type": "<category_type_2>",
+      "keywords": ["<keyword_4>", "<keyword_5>", "<keyword_6>"],
+      "display_name": "<category_type_2>: <keyword_4>, <keyword_5>, <keyword_6>",
+      "created_at": "<ISO8601_timestamp>"
+    }
   ]
 }
 ```
 
-Each category has a descriptive prefix (Document, Report, Analysis, etc.) followed by the most important terms that characterize that category.
+Each structured category includes an ID, type, keywords array, display name, and creation timestamp.
 
 ### Check Processing Status
 
@@ -236,13 +275,13 @@ curl http://localhost:7860/status/
   "documents": [
     {
       "document_id": "<uuid>",
-      "filename": "document.pdf",
+      "filename": "<original_filename.pdf>",
       "status": "processed",
-      "categories": ["<Cagegory naming e.g., Document: ai, data, industries>: <category 1>,<category 2>,<category 3>,..."]
+      "categories": ["<category_type>: <keyword_1>, <keyword_2>, <keyword_3>"]
     },
     {
       "document_id": "<uuid>",
-      "filename": "another-document.pdf",
+      "filename": "<another_filename.pdf>",
       "status": "processing",
       "categories": ["Processing"]
     }
@@ -264,14 +303,39 @@ To manually trigger recategorization of all documents:
 POST /recategorize/
 ```
 
-This endpoint processes all existing documents, applies the categorization logic, updates the document index and returns the new categories. Note that this is typically not needed as categorization happens automatically after each document upload.
+This endpoint processes all existing documents, applies the categorization logic, updates the document index and returns the new structured categories. Note that this is typically not needed as categorization happens automatically after each document upload.
+
+**Response**:
+
+```json
+{
+  "status": "success",
+  "message": "Recategorized X of Y documents",
+  "structured_categories": [
+    {
+      "id": "<cat-XXX_format>",
+      "type": "<category_type_1>",
+      "keywords": ["<keyword_1>", "<keyword_2>", "<keyword_3>"],
+      "display_name": "<category_type_1>: <keyword_1>, <keyword_2>, <keyword_3>",
+      "created_at": "<ISO8601_timestamp>"
+    },
+    {
+      "id": "<cat-XXX_format>",
+      "type": "<category_type_2>",
+      "keywords": ["<keyword_4>", "<keyword_5>", "<keyword_6>"],
+      "display_name": "<category_type_2>: <keyword_4>, <keyword_5>, <keyword_6>",
+      "created_at": "<ISO8601_timestamp>"
+    }
+  ]
+}
+```
 
 ### Custom Recategorization with Specific Cluster Count
 
 To manually trigger recategorization with a custom number of clusters:
 
 ```text
-POST /recategorize-with-clusters/?clusters=10
+POST /recategorize-with-clusters/?clusters=<number_2_to_20>
 ```
 
 This endpoint allows you to specify how many distinct categories you want the system to create. The `clusters` parameter can be set between 2 and 20, with a default of 8 if not specified. If the number of clusters exceeds the number of documents, the system will automatically adjust the cluster count to match the document count.
@@ -284,8 +348,23 @@ This endpoint allows you to specify how many distinct categories you want the sy
 ```json
 {
   "status": "success",
-  "message": "All documents recategorized",
-  "categories": ["Document: ai, data, industries", "Report: review, time, problem", ...]
+  "message": "All documents recategorized with X clusters",
+  "structured_categories": [
+    {
+      "id": "<cat-XXX_format>",
+      "type": "<category_type_1>",
+      "keywords": ["<keyword_1>", "<keyword_2>", "<keyword_3>"],
+      "display_name": "<category_type_1>: <keyword_1>, <keyword_2>, <keyword_3>",
+      "created_at": "<ISO8601_timestamp>"
+    },
+    {
+      "id": "<cat-XXX_format>",
+      "type": "<category_type_2>",
+      "keywords": ["<keyword_4>", "<keyword_5>", "<keyword_6>"],
+      "display_name": "<category_type_2>: <keyword_4>, <keyword_5>, <keyword_6>",
+      "created_at": "<ISO8601_timestamp>"
+    }
+  ]
 }
 ```
 
@@ -312,12 +391,49 @@ curl -X POST http://localhost:7860/cleanup-duplicates/
 ```json
 {
   "status": "success",
-  "message": "Removed 3 duplicate documents",
-  "document_count": 5
+  "message": "Removed <number_of_duplicates> duplicate documents",
+  "document_count": <remaining_document_count>
 }
 ```
 
 This is useful for cleaning up the document index if the same documents were uploaded multiple times before duplicate detection was implemented.
+
+### Generate Structured Categories
+
+To generate structured categories from existing categories:
+
+```text
+POST /generate-structured-categories/
+```
+
+This endpoint converts the existing string-based categories into a structured format with type, keywords, and metadata.
+
+For example, using curl:
+
+```bash
+curl -X POST http://localhost:7860/generate-structured-categories/
+```
+
+**Response**:
+
+```json
+{
+  "status": "success",
+  "message": "Generated <number_of_categories> structured categories",
+  "structured_categories": [
+    {
+      "id": "<cat-XXX>",
+      "type": "<category_type>",
+      "keywords": ["<keyword_1>", "<keyword_2>", "<keyword_3>"],
+      "display_name": "<category_type>: <keyword_1>, <keyword_2>, <keyword_3>",
+      "created_at": "<ISO8601_timestamp>"
+    },
+    ...
+  ]
+}
+```
+
+This structured format provides better organization and more metadata for enterprise applications.
 
 ## How It Works
 
@@ -335,6 +451,7 @@ This is useful for cleaning up the document index if the same documents were upl
    - Categories use descriptive prefixes (Document, Report, Analysis, etc.) for better readability
    - The system ensures categories are unique and descriptive
    - By default, the system creates 8 distinct categories (can be customized)
+   - Support for structured categories with metadata for enterprise applications
    - The categorization process runs in the background after each document is processed
    - The system automatically adjusts the number of clusters if there are fewer documents than requested clusters
 

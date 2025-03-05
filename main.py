@@ -11,6 +11,7 @@ import threading
 import json
 import pickle
 from sklearn.cluster import KMeans
+import datetime
 
 from document_processor import DocumentProcessor
 from search_engine import SearchEngine
@@ -60,6 +61,8 @@ search_engine = SearchEngine()
 class SearchQuery(BaseModel):
     query: str
     categories: Optional[List[str]] = None
+    category_types: Optional[List[str]] = None  # New field for filtering by category type
+    keywords: Optional[List[str]] = None  # New field for filtering by keywords
 
 # Function to recategorize all documents
 def recategorize_all_documents():
@@ -88,6 +91,11 @@ def recategorize_all_documents():
                 # Generate new category names
                 document_processor._generate_category_names()
                 logger.info(f"Regenerated categories: {document_processor.document_index['categories']}")
+                
+                # Ensure structured categories are generated
+                if 'structured_categories' not in document_processor.document_index or not document_processor.document_index['structured_categories']:
+                    logger.info("Generating structured categories")
+                    document_processor.generate_structured_categories()
                 
                 # Save the updated model and vectorizer
                 with open(document_processor.model_file, 'wb') as f:
@@ -122,6 +130,10 @@ def recategorize_all_documents():
         
         logger.info(f"Auto-recategorization completed: {updated_count} of {doc_count} documents updated")
         logger.info(f"Current categories: {document_processor.document_index['categories']}")
+        
+        # Log structured categories
+        if 'structured_categories' in document_processor.document_index:
+            logger.info(f"Current structured categories: {len(document_processor.document_index['structured_categories'])} categories")
     except Exception as e:
         logger.error(f"Error during auto-recategorization: {str(e)}")
         logger.error(traceback.format_exc())
@@ -240,15 +252,58 @@ async def upload_file(file: UploadFile = File(...)):
 async def search_documents(search_query: SearchQuery):
     """Search through processed documents"""
     try:
-        logger.info(f"Search query: {search_query.query}, categories: {search_query.categories}")
+        logger.info(f"Search query: {search_query.query}, categories: {search_query.categories}, " +
+                   f"category_types: {search_query.category_types}, keywords: {search_query.keywords}")
+        
+        # If category_types or keywords are provided, convert them to category filters
+        categories = search_query.categories or []
+        
+        # If structured category filters are provided, find matching categories
+        if search_query.category_types or search_query.keywords:
+            # Get structured categories if they exist
+            structured_categories = document_processor.document_index.get("structured_categories", [])
+            
+            if structured_categories:
+                for cat in structured_categories:
+                    # Filter by category type
+                    if search_query.category_types and cat["type"] in search_query.category_types:
+                        categories.append(cat["display_name"])
+                        continue
+                        
+                    # Filter by keywords
+                    if search_query.keywords and any(kw in cat["keywords"] for kw in search_query.keywords):
+                        categories.append(cat["display_name"])
+        
+        # Remove duplicates
+        categories = list(set(categories))
         
         results = search_engine.search(
             search_query.query, 
-            categories=search_query.categories
+            categories=categories if categories else None
         )
         
+        # Get available category types and keywords for filtering
+        available_filters = {
+            "category_types": [],
+            "keywords": []
+        }
+        
+        structured_categories = document_processor.document_index.get("structured_categories", [])
+        if structured_categories:
+            # Extract unique category types
+            available_filters["category_types"] = sorted(list(set(cat["type"] for cat in structured_categories)))
+            
+            # Extract unique keywords
+            all_keywords = []
+            for cat in structured_categories:
+                all_keywords.extend(cat["keywords"])
+            available_filters["keywords"] = sorted(list(set(all_keywords)))
+        
         logger.info(f"Search completed, found {len(results)} results")
-        return {"results": results}
+        return {
+            "results": results,
+            "available_filters": available_filters
+        }
     except Exception as e:
         logger.error(f"Search error: {str(e)}")
         logger.error(traceback.format_exc())
@@ -259,15 +314,33 @@ async def get_categories():
     """Get all available document categories"""
     try:
         logger.info("Retrieving categories")
-        categories = document_processor.get_categories()
-        logger.info(f"Retrieved categories: {categories}")
+        
+        # Get structured categories if they exist
+        structured_categories = document_processor.document_index.get("structured_categories", [])
+        
+        # If structured categories don't exist, generate them
+        if not structured_categories:
+            logger.info("No structured categories found, generating them")
+            structured_categories = document_processor.generate_structured_categories()
+        
+        logger.info(f"Retrieved {len(structured_categories)} structured categories")
         
         # If categories is empty, add a default category
-        if not categories:
+        if not structured_categories:
             logger.info("No categories found, returning default")
-            return {"categories": ["Uncategorized"]}
+            return {
+                "structured_categories": [
+                    {
+                        "id": "cat-001",
+                        "type": "Uncategorized",
+                        "keywords": [],
+                        "display_name": "Uncategorized",
+                        "created_at": datetime.datetime.now().isoformat()
+                    }
+                ]
+            }
             
-        return {"categories": categories}
+        return {"structured_categories": structured_categories}
     except Exception as e:
         logger.error(f"Error retrieving categories: {str(e)}")
         logger.error(traceback.format_exc())
@@ -286,10 +359,15 @@ async def recategorize():
         # Then recategorize all documents
         recategorize_all_documents()
         
+        # Ensure structured categories exist
+        structured_categories = document_processor.document_index.get("structured_categories", [])
+        if not structured_categories:
+            structured_categories = document_processor.generate_structured_categories()
+        
         return {
             "status": "success", 
-            "message": f"All documents recategorized (removed {duplicates_removed} duplicates)", 
-            "categories": document_processor.get_categories()
+            "message": f"Recategorized {len(document_processor.document_index['documents'])} of {len(document_processor.document_index['documents'])} documents",
+            "structured_categories": structured_categories
         }
     except Exception as e:
         logger.error(f"Error in recategorization: {str(e)}")
@@ -315,7 +393,7 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
             return {
                 "status": "warning",
                 "message": "No documents to recategorize",
-                "categories": []
+                "structured_categories": []
             }
         
         # Check if we have enough documents for the requested number of clusters
@@ -324,10 +402,14 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
         
         if doc_count < 5:
             logger.warning(f"Not enough documents for clustering ({doc_count}/5)")
+            # Generate structured categories if they don't exist
+            structured_categories = document_processor.document_index.get("structured_categories", [])
+            if not structured_categories:
+                structured_categories = document_processor.generate_structured_categories()
             return {
                 "status": "warning",
                 "message": f"Not enough documents for clustering (need at least 5, have {doc_count})",
-                "categories": document_processor.get_categories()
+                "structured_categories": structured_categories
             }
         
         if doc_count < clusters:
@@ -360,10 +442,15 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
             # Recategorize all documents
             recategorize_all_documents()
             
+            # Ensure structured categories exist
+            structured_categories = document_processor.document_index.get("structured_categories", [])
+            if not structured_categories:
+                structured_categories = document_processor.generate_structured_categories()
+            
             return {
                 "status": "success",
                 "message": f"All documents recategorized with {adjusted_clusters} clusters{adjustment_message} (removed {duplicates_removed} duplicates)",
-                "categories": document_processor.get_categories()
+                "structured_categories": structured_categories
             }
         except Exception as e:
             logger.error(f"Error fitting model: {str(e)}")
@@ -378,32 +465,36 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
 # Add a status endpoint to check processing status
 @app.get("/status/")
 async def get_status():
-    """
-    Get the processing status of all documents.
-    """
+    """Get the processing status of all documents"""
     try:
-        logger.info("Retrieving document status information")
-        documents = []
+        logger.info("Retrieving document status")
         
-        # Get all documents from the index
-        for doc_id, doc_info in document_processor.document_index["documents"].items():
-            status = "processed" if doc_info.get("processed", False) else "processing"
-            
-            # Check if there was an error during processing
-            if doc_info.get("error", False):
-                status = "error"
-                
-            documents.append({
-                "document_id": doc_id,
+        documents = document_processor.document_index["documents"]
+        
+        # Create a response with document status
+        response = {
+            "status": "success",
+            "document_count": len(documents),
+            "documents": []
+        }
+        
+        # Add structured categories if they exist
+        if "structured_categories" in document_processor.document_index:
+            response["structured_categories"] = document_processor.document_index["structured_categories"]
+        
+        # Add each document's status
+        for doc_id, doc_info in documents.items():
+            response["documents"].append({
+                "id": doc_id,
                 "filename": doc_info.get("filename", "Unknown"),
-                "status": status,
+                "status": "processed" if "categories" in doc_info and doc_info["categories"] != ["Processing"] else "processing",
                 "categories": doc_info.get("categories", ["Processing"])
             })
-            
-        logger.info(f"Retrieved status for {len(documents)} documents")
-        return {"documents": documents}
+        
+        return response
     except Exception as e:
         logger.error(f"Error retrieving document status: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error retrieving document status: {str(e)}")
 
 # Add a health check endpoint
@@ -419,18 +510,43 @@ async def cleanup_duplicates():
         logger.info("Duplicate cleanup requested")
         
         # Clean up duplicates
-        duplicates_removed = document_processor.clean_up_duplicates()
-        logger.info(f"Removed {duplicates_removed} duplicate documents")
+        removed_count = document_processor.clean_up_duplicates()
+        
+        # Get the current document count
+        document_count = len(document_processor.document_index["documents"])
+        
+        logger.info(f"Removed {removed_count} duplicate documents, {document_count} documents remaining")
         
         return {
-            "status": "success", 
-            "message": f"Removed {duplicates_removed} duplicate documents", 
-            "document_count": len(document_processor.document_index["documents"])
+            "status": "success",
+            "message": f"Removed {removed_count} duplicate documents",
+            "document_count": document_count
         }
     except Exception as e:
-        logger.error(f"Error in duplicate cleanup: {str(e)}")
+        logger.error(f"Error cleaning up duplicates: {str(e)}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error in duplicate cleanup: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error cleaning up duplicates: {str(e)}")
+
+@app.post("/generate-structured-categories/")
+async def generate_structured_categories():
+    """Generate structured categories from existing categories"""
+    try:
+        logger.info("Structured categories generation requested")
+        
+        # Generate structured categories
+        structured_categories = document_processor.generate_structured_categories()
+        
+        logger.info(f"Generated {len(structured_categories)} structured categories")
+        
+        return {
+            "status": "success",
+            "message": f"Generated {len(structured_categories)} structured categories",
+            "structured_categories": structured_categories
+        }
+    except Exception as e:
+        logger.error(f"Error generating structured categories: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error generating structured categories: {str(e)}")
 
 if __name__ == "__main__":
     logger.info("Starting PDF AI Mapper application")

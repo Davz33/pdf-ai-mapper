@@ -18,6 +18,7 @@ import threading
 import logging
 import traceback
 import hashlib
+import datetime
 
 # Download necessary NLTK data
 try:
@@ -348,8 +349,11 @@ class DocumentProcessor:
                 # Select top 3 terms that are most distinctive
                 selected_terms = terms[:3]
                 
-                # Create a base category name
-                base_name = f"{domain_prefixes[i % len(domain_prefixes)]}: {', '.join(selected_terms)}"
+                # Create a category type
+                category_type = domain_prefixes[i % len(domain_prefixes)]
+                
+                # Create a base category name (for backward compatibility)
+                base_name = f"{category_type}: {', '.join(selected_terms)}"
                 
                 # Ensure uniqueness
                 category_name = base_name
@@ -357,7 +361,7 @@ class DocumentProcessor:
                 while category_name in all_category_names:
                     # If duplicate, add another term or increment counter
                     if len(terms) > 3 and counter <= len(terms) - 3:
-                        category_name = f"{domain_prefixes[i % len(domain_prefixes)]}: {', '.join(selected_terms + [terms[2 + counter]])}"
+                        category_name = f"{category_type}: {', '.join(selected_terms + [terms[2 + counter]])}"
                     else:
                         category_name = f"{base_name} (Group {counter})"
                     counter += 1
@@ -367,6 +371,34 @@ class DocumentProcessor:
             
             logging.info(f"Generated categories: {categories}")
             self.document_index["categories"] = categories
+            
+            # For future enterprise use, also store structured category data
+            # This doesn't affect current functionality but prepares for future enhancements
+            structured_categories = []
+            for i, category_name in enumerate(categories):
+                parts = category_name.split(": ", 1)
+                if len(parts) == 2:
+                    category_type = parts[0]
+                    keywords = [k.strip() for k in parts[1].split(",")]
+                    
+                    structured_category = {
+                        "id": f"cat-{i+1:03d}",
+                        "type": category_type,
+                        "keywords": keywords,
+                        "display_name": category_name,
+                        "created_at": datetime.datetime.now().isoformat()
+                    }
+                    structured_categories.append(structured_category)
+                    logging.info(f"Created structured category: {structured_category}")
+            
+            # Store for future use (doesn't affect current functionality)
+            self.document_index["structured_categories"] = structured_categories
+            logging.info(f"Added {len(structured_categories)} structured categories to document index")
+            
+            # Save the document index to persist the structured categories
+            self._save_document_index()
+            logging.info("Saved document index with structured categories")
+            
         except Exception as e:
             logging.error(f"Error generating category names: {e}")
             logging.error(traceback.format_exc())
@@ -538,15 +570,59 @@ class DocumentProcessor:
             return doc_id, ["Error: " + str(e)]
     
     def get_categories(self):
-        """Return all available categories"""
-        # Ensure we always have at least the Uncategorized category
-        if not self.document_index["categories"]:
-            self.document_index["categories"] = ["Uncategorized"]
-            # Save the updated index
-            try:
-                with open(self.index_file, 'w') as f:
-                    json.dump(self.document_index, f)
-            except Exception as e:
-                logging.error(f"Error saving document index: {e}")
+        """Get all available categories"""
+        try:
+            return self.document_index["categories"]
+        except Exception as e:
+            logging.error(f"Error getting categories: {e}")
+            return []
+            
+    def generate_structured_categories(self):
+        """Generate structured categories from existing categories"""
+        try:
+            categories = self.document_index.get("categories", [])
+            if not categories:
+                logging.warning("No categories found to structure")
+                return []
                 
-        return self.document_index["categories"] 
+            structured_categories = []
+            for i, category_name in enumerate(categories):
+                parts = category_name.split(": ", 1)
+                if len(parts) == 2:
+                    category_type = parts[0]
+                    keywords = [k.strip() for k in parts[1].split(",")]
+                    
+                    structured_category = {
+                        "id": f"cat-{i+1:03d}",
+                        "type": category_type,
+                        "keywords": keywords,
+                        "display_name": category_name,
+                        "created_at": datetime.datetime.now().isoformat()
+                    }
+                    structured_categories.append(structured_category)
+                    logging.info(f"Created structured category: {structured_category}")
+                else:
+                    logging.warning(f"Could not parse category: {category_name}")
+            
+            # Store the structured categories
+            self.document_index["structured_categories"] = structured_categories
+            logging.info(f"Added {len(structured_categories)} structured categories to document index")
+            
+            # Save the document index to persist the structured categories
+            self._save_document_index()
+            logging.info("Saved document index with structured categories")
+            
+            return structured_categories
+        except Exception as e:
+            logging.error(f"Error generating structured categories: {e}")
+            logging.error(traceback.format_exc())
+            return []
+    
+    def _save_document_index(self):
+        """Save the document index to file"""
+        try:
+            with open(self.index_file, 'w') as f:
+                json.dump(self.document_index, f)
+            logging.info("Saved document index")
+        except Exception as e:
+            logging.error(f"Error saving document index: {e}") 

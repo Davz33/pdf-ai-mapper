@@ -73,6 +73,12 @@ class SearchEngine:
         results = []
         content_hashes_seen = set()  # Track content hashes to avoid duplicates
         
+        # Get structured categories if they exist
+        structured_categories_dict = {}
+        if "structured_categories" in self.document_index:
+            for cat in self.document_index["structured_categories"]:
+                structured_categories_dict[cat["display_name"]] = cat
+        
         # Search through all documents
         for doc_id, doc_data in self.document_index["documents"].items():
             # Skip if category filter is applied and document doesn't match
@@ -90,13 +96,25 @@ class SearchEngine:
             score = self._calculate_relevance(query_tokens, doc_data["full_text"])
             
             if score > 0:
-                results.append({
+                # Get structured category information if available
+                structured_categories = []
+                for cat in doc_data["categories"]:
+                    if cat in structured_categories_dict:
+                        structured_categories.append(structured_categories_dict[cat])
+                
+                result = {
                     "document_id": doc_id,
                     "filename": doc_data["filename"],
                     "categories": doc_data["categories"],
                     "score": score,
                     "snippet": self._generate_snippet(query_tokens, doc_data["full_text"])
-                })
+                }
+                
+                # Add structured categories if available
+                if structured_categories:
+                    result["structured_categories"] = structured_categories
+                
+                results.append(result)
         
         # Sort by relevance score (descending)
         results.sort(key=lambda x: x["score"], reverse=True)

@@ -1,6 +1,68 @@
 # PDF and Image AI Mapper
 
-A tool for processing, categorizing, and searching through PDF documents and images using OCR.
+A full-stack tool for processing, categorizing, and searching through PDF documents and images using OCR.
+
+## How It Works
+
+1. **Document Processing**:
+   - PDF files are parsed for text using PyPDF2
+   - If text extraction fails or is limited, PDF pages are converted to images for OCR
+   - Images are processed using Tesseract OCR
+   - Extracted text is cleaned and preprocessed
+   - Content hashing is used to detect duplicate documents
+
+2. **Categorization**:
+   - Documents are automatically categorized after upload using unsupervised K-means clustering
+   - TF-IDF vectorization is used to represent document content
+   - Category names are generated from important terms in each cluster
+   - Categories use descriptive prefixes (Document, Report, Analysis, etc.) for better readability
+   - The system ensures categories are unique and descriptive
+   - By default, the system creates 8 distinct categories (can be customized)
+   - Support for structured categories with metadata for enterprise applications
+   - The categorization process runs in the background after each document is processed
+   - The system automatically adjusts the number of clusters if there are fewer documents than requested clusters
+
+3. **Search**:
+   - Search uses a simple but effective relevance scoring system
+   - Results can be filtered by categories
+   - Relevant snippets are generated to show matching context
+   - Duplicate documents are automatically filtered from search results
+
+4. **Duplicate Detection**:
+   - The system calculates a content hash for each document
+   - When a new document is uploaded, it's compared against existing documents
+   - If a duplicate is found (by filename or content), the existing document is used
+   - This prevents duplicate entries in the document index and search results
+
+## Monorepo Setup
+
+This project uses [pnpm workspaces](https://pnpm.io/workspaces) and [Nx](https://nx.dev/) for managing the frontend, and [Pixi](https://pixi.sh) for the Python backend.
+
+```text
+root/
+├── apps/
+│   ├── backend-python/      # Python backend (FastAPI/Flask, managed by Pixi)
+│   └── frontend/            # React app (Nx + pnpm)
+├── libs/
+│   └── protos/              # Shared .proto files for gRPC (if any)
+├── package.json
+├── pnpm-workspace.yaml
+├── nx.json
+├── tsconfig.base.json
+├── .gitignore
+├── README.md
+└── ...
+```
+
+## Requirements
+
+- Python (for backend)
+- Node.js (for frontend)
+- pnpm (for monorepo and frontend)
+- Pixi package manager (for backend environment)
+- Docker (optional, for containerized running and development)
+- Tesseract OCR engine
+- Poppler (for PDF to image conversion)
 
 ## Features
 
@@ -11,13 +73,6 @@ A tool for processing, categorizing, and searching through PDF documents and ima
 - Filter search results by categories
 - Detect and handle duplicate documents
 - Support for structured categories with metadata for enterprise applications
-
-## Requirements
-
-- Python 3.8+
-- Tesseract OCR engine
-- Poppler (for PDF to image conversion)
-- Pixi package manager / Docker
 
 ## Installation
 
@@ -35,15 +90,27 @@ A tool for processing, categorizing, and searching through PDF documents and ima
 
 3. Install [Pixi](https://pixi.sh) if you haven't already:
 
-```sh
-curl -fsSL https://pixi.sh/install.sh | bash
-```
+    ```sh
+    curl -fsSL https://pixi.sh/install.sh | bash
+    ```
 
-4. Create a development environment and install dependencies:
+4. Install pnpm
 
-```sh
-pixi install
-```
+    ```sh
+    npm install -g pnpm
+    ```
+
+5. Install monorepo dependencies
+
+    ```sh
+    pnpm install
+    ```
+
+6. Install Backend Python dependencies:
+
+    ```sh
+    cd apps/backend-python && pixi install
+    ```
 
 ### Option 2: Using Docker
 
@@ -67,37 +134,39 @@ This will:
 
 ### Local Usage
 
-1. Start the server:
+1. Start the Python Backend:
 
-```sh
-pixi run start
-```
+    ```sh
+    cd apps/backend-python && pixi run start
+    ```
 
-or
+2. Start the React Frontend:
 
-```sh
-pixi run python main.py
-```
+    ```sh
+    pnpm nx serve frontend
+    ```
+
+or (if using Vite directly) `cd apps/frontend && pnpm run dev`
 
 ### Docker Usage
 
 1. Start the application with Docker Compose:
 
-```sh
-docker-compose up
-```
+    ```sh
+    docker-compose up
+    ```
 
 2. To run in the background:
 
-```sh
-docker-compose up -d
-```
+    ```sh
+    docker-compose up -d
+    ```
 
 3. To stop the application:
 
-```sh
-docker-compose down
-```
+    ```sh
+    docker-compose down
+    ```
 
 The API will be available at `http://localhost:7860` for both local and Docker usage.
 
@@ -341,6 +410,7 @@ POST /recategorize-with-clusters/?clusters=<number_2_to_20>
 This endpoint allows you to specify how many distinct categories you want the system to create. The `clusters` parameter can be set between 2 and 20, with a default of 8 if not specified. If the number of clusters exceeds the number of documents, the system will automatically adjust the cluster count to match the document count.
 
 **Request Parameters**:
+
 - `clusters`: Integer between 2 and 20 (default: 8)
 
 **Response**:
@@ -434,38 +504,6 @@ curl -X POST http://localhost:7860/generate-structured-categories/
 ```
 
 This structured format provides better organization and more metadata for enterprise applications.
-
-## How It Works
-
-1. **Document Processing**:
-   - PDF files are parsed for text using PyPDF2
-   - If text extraction fails or is limited, PDF pages are converted to images for OCR
-   - Images are processed using Tesseract OCR
-   - Extracted text is cleaned and preprocessed
-   - Content hashing is used to detect duplicate documents
-
-2. **Categorization**:
-   - Documents are automatically categorized after upload using unsupervised K-means clustering
-   - TF-IDF vectorization is used to represent document content
-   - Category names are generated from important terms in each cluster
-   - Categories use descriptive prefixes (Document, Report, Analysis, etc.) for better readability
-   - The system ensures categories are unique and descriptive
-   - By default, the system creates 8 distinct categories (can be customized)
-   - Support for structured categories with metadata for enterprise applications
-   - The categorization process runs in the background after each document is processed
-   - The system automatically adjusts the number of clusters if there are fewer documents than requested clusters
-
-3. **Search**:
-   - Search uses a simple but effective relevance scoring system
-   - Results can be filtered by categories
-   - Relevant snippets are generated to show matching context
-   - Duplicate documents are automatically filtered from search results
-
-4. **Duplicate Detection**:
-   - The system calculates a content hash for each document
-   - When a new document is uploaded, it's compared against existing documents
-   - If a duplicate is found (by filename or content), the existing document is used
-   - This prevents duplicate entries in the document index and search results
 
 ## Document Processing Workflow
 

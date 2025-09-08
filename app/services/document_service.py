@@ -8,7 +8,7 @@ import traceback
 from typing import Tuple, List
 from logger import setup_logger
 
-from document_processor import DocumentProcessor
+from app.core.document_processor import DocumentProcessor
 
 
 class DocumentService:

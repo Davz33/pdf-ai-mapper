@@ -6,7 +6,7 @@ from typing import Dict, Any
 
 from ..models.schemas import SearchQuery, SearchResponse
 from ..services.document_service import DocumentService
-from search_engine import SearchEngine
+from app.core.search.search_engine import SearchEngine
 from logger import setup_logger
 
 router = APIRouter()
@@ -41,13 +41,22 @@ async def search_documents(search_query: SearchQuery) -> Dict[str, Any]:
         
         categories = list(set(categories))
         
-        results = search_engine.search(
-            search_query.query, 
-            categories=categories if categories else None
-        )
-        
-        # Get available filters
-        available_filters = _get_available_filters(processor)
+        # Use structured search if filters are provided
+        if search_query.category_types or search_query.keywords:
+            search_result = search_engine.search_with_structured_filters(
+                search_query.query,
+                category_types=search_query.category_types,
+                keywords=search_query.keywords
+            )
+            results = search_result["results"]
+            available_filters = search_result["available_filters"]
+        else:
+            results = search_engine.search(
+                search_query.query, 
+                categories=categories if categories else None
+            )
+            # Get available filters
+            available_filters = _get_available_filters(processor)
         
         logger.info(f"Search completed, found {len(results)} results")
         return {

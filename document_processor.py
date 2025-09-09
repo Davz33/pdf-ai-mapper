@@ -34,6 +34,9 @@ class DocumentProcessor:
         self.model_file = os.path.join(self.processed_dir, "category_model.pkl")
         self.vectorizer_file = os.path.join(self.processed_dir, "vectorizer.pkl")
         
+        self._pending_save = False
+        self._save_lock = threading.Lock()
+        
         # Create processed_data directory if it doesn't exist
         os.makedirs(self.processed_dir, exist_ok=True)
         
@@ -57,8 +60,7 @@ class DocumentProcessor:
             }
             # Save the initial index
             try:
-                with open(self.index_file, 'w') as f:
-                    json.dump(self.document_index, f)
+                self._save_document_index_immediate()
                 logging.info("Created new document index file")
             except Exception as e:
                 logging.error(f"Error creating document index file: {e}")
@@ -395,9 +397,8 @@ class DocumentProcessor:
             self.document_index["structured_categories"] = structured_categories
             logging.info(f"Added {len(structured_categories)} structured categories to document index")
             
-            # Save the document index to persist the structured categories
-            self._save_document_index()
-            logging.info("Saved document index with structured categories")
+            self._mark_for_save()
+            logging.info("Marked document index for save with structured categories")
             
         except Exception as e:
             logging.error(f"Error generating category names: {e}")
@@ -405,8 +406,9 @@ class DocumentProcessor:
             # Create more descriptive default categories
             prefixes = ["Document", "Report", "Analysis", "Research", "Paper", 
                        "Publication", "Article", "Study"]
+            n_clusters = getattr(self.model, 'n_clusters', 8)
             self.document_index["categories"] = [f"{prefixes[i % len(prefixes)]} Group {i+1}" 
-                                               for i in range(self.model.n_clusters)]
+                                               for i in range(n_clusters)]
     
     def _calculate_content_hash(self, text):
         """Calculate a hash of the document content for duplicate detection"""
@@ -480,11 +482,9 @@ class DocumentProcessor:
             del self.document_index["documents"][doc_id]
             logging.info(f"Removed duplicate document: {doc_id}")
         
-        # Save the updated index
         if duplicates_to_remove:
-            with open(self.index_file, 'w') as f:
-                json.dump(self.document_index, f)
-            logging.info(f"Saved document index after removing {len(duplicates_to_remove)} duplicates")
+            self._mark_for_save()
+            logging.info(f"Marked document index for save after removing {len(duplicates_to_remove)} duplicates")
         
         return len(duplicates_to_remove)
     
@@ -520,9 +520,7 @@ class DocumentProcessor:
                 # Update the existing document with new path if needed
                 self.document_index["documents"][existing_doc_id]["path"] = file_path
                 
-                # Save updated index
-                with open(self.index_file, 'w') as f:
-                    json.dump(self.document_index, f)
+                self._mark_for_save()
                 
                 # Return the existing document ID and its categories
                 return existing_doc_id, self.document_index["documents"][existing_doc_id]["categories"]
@@ -556,9 +554,7 @@ class DocumentProcessor:
             # Add to document index
             self.document_index["documents"][doc_id] = document_data
             
-            # Save updated index
-            with open(self.index_file, 'w') as f:
-                json.dump(self.document_index, f)
+            self._mark_for_save()
             
             logging.info(f"Document processing completed in {time.time() - start_time:.2f}s: {doc_id}")
             return doc_id, categories
@@ -608,9 +604,8 @@ class DocumentProcessor:
             self.document_index["structured_categories"] = structured_categories
             logging.info(f"Added {len(structured_categories)} structured categories to document index")
             
-            # Save the document index to persist the structured categories
-            self._save_document_index()
-            logging.info("Saved document index with structured categories")
+            self._mark_for_save()
+            logging.info("Marked document index for save with structured categories")
             
             return structured_categories
         except Exception as e:
@@ -618,11 +613,33 @@ class DocumentProcessor:
             logging.error(traceback.format_exc())
             return []
     
-    def _save_document_index(self):
-        """Save the document index to file"""
+    def _mark_for_save(self):
+        """Mark the document index for batched saving"""
+        with self._save_lock:
+            self._pending_save = True
+    
+    def _save_document_index_immediate(self):
+        """Immediately save the document index to file"""
         try:
             with open(self.index_file, 'w') as f:
                 json.dump(self.document_index, f)
-            logging.info("Saved document index")
+            logging.info("Saved document index immediately")
         except Exception as e:
-            logging.error(f"Error saving document index: {e}") 
+            logging.error(f"Error saving document index: {e}")
+    
+    def _save_document_index(self):
+        """Save the document index to file (legacy method for compatibility)"""
+        self._save_document_index_immediate()
+    
+    def flush_pending_saves(self):
+        """Flush any pending saves to disk"""
+        with self._save_lock:
+            if self._pending_save:
+                try:
+                    with open(self.index_file, 'w') as f:
+                        json.dump(self.document_index, f)
+                    self._pending_save = False
+                    logging.info("Flushed pending document index save")
+                except Exception as e:
+                    logging.error(f"Error flushing document index save: {e}")
+                    raise     

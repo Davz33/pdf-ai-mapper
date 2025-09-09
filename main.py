@@ -124,9 +124,10 @@ def recategorize_all_documents():
             except Exception as e:
                 logger.error(f"Error recategorizing document {doc_id}: {str(e)}")
         
-        # Save updated index
-        with open(document_processor.index_file, 'w') as f:
-            json.dump(document_processor.document_index, f)
+        document_processor._mark_for_save()
+        
+        # Flush any pending saves after recategorization
+        document_processor.flush_pending_saves()
         
         logger.info(f"Auto-recategorization completed: {updated_count} of {doc_count} documents updated")
         logger.info(f"Current categories: {document_processor.document_index['categories']}")
@@ -169,6 +170,9 @@ def process_document_background(file_path, file_name, doc_id):
             
         # Automatically recategorize all documents
         recategorize_all_documents()
+        
+        # Flush any pending saves after processing
+        document_processor.flush_pending_saves()
             
         # Update status endpoint data
         try:

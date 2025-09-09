@@ -333,6 +333,7 @@ async def get_categories():
         if not structured_categories:
             logger.info("No categories found, returning default")
             return {
+                "categories": ["Uncategorized"],
                 "structured_categories": [
                     {
                         "id": "cat-001",
@@ -344,7 +345,10 @@ async def get_categories():
                 ]
             }
             
-        return {"structured_categories": structured_categories}
+        return {
+            "categories": document_processor.document_index.get("categories", ["Uncategorized"]),
+            "structured_categories": structured_categories
+        }
     except Exception as e:
         logger.error(f"Error retrieving categories: {str(e)}")
         logger.error(traceback.format_exc())
@@ -478,7 +482,10 @@ async def get_status():
         # Create a response with document status
         response = {
             "status": "success",
+            "total_documents": len(documents),
             "document_count": len(documents),
+            "categories": document_processor.document_index.get("categories", ["Uncategorized"]),
+            "last_updated": "Never",
             "documents": []
         }
         

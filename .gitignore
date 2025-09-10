@@ -174,3 +174,34 @@ document_index.json
 
 # PDF files
 *.pdf
+
+# NX
+.nx
+
+# Frontend
+node_modules
+
+# OS
+.DS_Store
+
+# IDE
+.vscode
+.cursor/
+
+# Test data and results
+test-data/
+test_*.py
+*_results.json
+categorization_results.json
+openlibrary_results.json
+
+# Logs
+logs/
+*.log
+
+# Processed data
+processed_data/
+
+# Prettier
+.prettierignore
+.prettierrc

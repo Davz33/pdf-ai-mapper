@@ -22,6 +22,7 @@ class TestApplicationFunctionality:
         self.test_dir = None
         self.server_process = None
         self.base_url = "http://localhost:8000"
+        self.original_dir = os.getcwd()
         
     def setup_test_environment(self):
         """Set up test environment"""
@@ -34,15 +35,32 @@ class TestApplicationFunctionality:
             "main.py", "document_processor.py", "search_engine.py", "logger.py"
         ]
         
-        source_dir = "/home/ubuntu/pdf-ai-mapper"
+        # Copy Python files
+        source_dir = Path(self.original_dir)
+        test_dir = Path(self.test_dir)
         for file in app_files:
-            src = os.path.join(source_dir, file)
-            dst = os.path.join(self.test_dir, file)
-            if os.path.exists(src):
+            src = source_dir / file
+            dst = test_dir / file
+            if src.exists():
                 shutil.copy2(src, dst)
                 print(f"Copied {file}")
             else:
                 print(f"Warning: {file} not found")
+        
+        # Create necessary directories
+        test_path = Path(self.test_dir)
+        (test_path / "uploads").mkdir(exist_ok=True)
+        (test_path / "processed_data").mkdir(exist_ok=True)
+        (test_path / "logs").mkdir(exist_ok=True)
+        
+        # Copy processed data if it exists
+        processed_data_src = Path(source_dir) / "apps" / "backend-python" / "processed_data"
+        if processed_data_src.exists():
+            processed_data_dst = test_path / "processed_data"
+            for file_path in processed_data_src.iterdir():
+                if file_path.is_file():
+                    shutil.copy2(file_path, processed_data_dst / file_path.name)
+                    print(f"Copied processed data: {file_path.name}")
                 
         return True
         
@@ -53,8 +71,8 @@ class TestApplicationFunctionality:
             self.server_process.wait()
             print("Server process terminated")
             
-        if self.test_dir and os.path.exists(self.test_dir):
-            os.chdir("/home/ubuntu/pdf-ai-mapper")  # Change back to original directory
+        if self.test_dir and Path(self.test_dir).exists():
+            os.chdir(self.original_dir)  # Change back to original directory
             shutil.rmtree(self.test_dir)
             print(f"Cleaned up test directory: {self.test_dir}")
             
@@ -63,6 +81,19 @@ class TestApplicationFunctionality:
         print("\n=== Starting FastAPI Server ===")
         
         try:
+            # First, test if we can import the modules
+            print("Testing module imports...")
+            test_import_cmd = [
+                sys.executable, "-c", 
+                "import main, document_processor, search_engine, logger; print('All modules imported successfully')"
+            ]
+            result = subprocess.run(test_import_cmd, cwd=self.test_dir, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"✗ Module import test failed: {result.stderr}")
+                return False
+            else:
+                print("✓ Module import test passed")
+            
             self.server_process = subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
                 stdout=subprocess.PIPE,
@@ -84,6 +115,13 @@ class TestApplicationFunctionality:
                 print(f"Waiting for server... ({attempt + 1}/{max_attempts})")
                 
             print("✗ Server failed to start within timeout")
+            # Print server output for debugging
+            if self.server_process:
+                stdout, stderr = self.server_process.communicate(timeout=1)
+                if stdout:
+                    print(f"Server stdout: {stdout.decode()}")
+                if stderr:
+                    print(f"Server stderr: {stderr.decode()}")
             return False
             
         except Exception as e:
@@ -194,19 +232,19 @@ class TestApplicationFunctionality:
         print("\n=== Testing Batching Behavior ===")
         
         try:
-            processed_dir = os.path.join(self.test_dir, "processed_data")
-            index_file = os.path.join(processed_dir, "document_index.json")
+            processed_dir = Path(self.test_dir) / "processed_data"
+            index_file = processed_dir / "document_index.json"
             
             initial_mtime = None
-            if os.path.exists(index_file):
-                initial_mtime = os.path.getmtime(index_file)
+            if index_file.exists():
+                initial_mtime = index_file.stat().st_mtime
                 
             for i in range(3):
                 requests.get(f"{self.base_url}/categories")
                 time.sleep(0.1)
                 
-            if os.path.exists(index_file):
-                final_mtime = os.path.getmtime(index_file)
+            if index_file.exists():
+                final_mtime = index_file.stat().st_mtime
                 if initial_mtime and final_mtime > initial_mtime:
                     print("✓ Document index file updated (batching working)")
                 elif not initial_mtime:

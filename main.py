@@ -79,8 +79,17 @@ def recategorize_all_documents():
         
         # Check if we have enough documents to regenerate categories
         if doc_count >= 5:
-            # Get all preprocessed texts
-            all_texts = [doc["preprocessed_text"] for doc in documents.values()]
+            # Get all preprocessed texts, handling missing fields gracefully
+            all_texts = []
+            for doc in documents.values():
+                if "preprocessed_text" in doc and doc["preprocessed_text"]:
+                    all_texts.append(doc["preprocessed_text"])
+                elif "full_text" in doc and doc["full_text"]:
+                    # Fallback to full_text if preprocessed_text is missing
+                    logger.warning(f"Document {doc.get('id', 'unknown')} missing preprocessed_text, using full_text")
+                    all_texts.append(doc["full_text"])
+                else:
+                    logger.warning(f"Document {doc.get('id', 'unknown')} has no text content, skipping")
             
             # Re-fit the vectorizer and model to ensure fresh categorization
             try:
@@ -110,8 +119,26 @@ def recategorize_all_documents():
         updated_count = 0
         for doc_id, doc in list(documents.items()):
             try:
-                # Get preprocessed text
-                preprocessed_text = doc["preprocessed_text"]
+                # Get preprocessed text with fallback
+                preprocessed_text = None
+                if "preprocessed_text" in doc and doc["preprocessed_text"]:
+                    preprocessed_text = doc["preprocessed_text"]
+                elif "full_text" in doc and doc["full_text"]:
+                    preprocessed_text = doc["full_text"]
+                elif "content_file" in doc and doc["content_file"]:
+                    # Load content from separate file
+                    try:
+                        with open(doc["content_file"], 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        # Use the content as preprocessed text
+                        preprocessed_text = content
+                        logger.info(f"Loaded content from {doc['content_file']} for document {doc_id}")
+                    except Exception as e:
+                        logger.error(f"Error loading content file {doc['content_file']}: {e}")
+                        continue
+                else:
+                    logger.warning(f"Document {doc_id} has no text content, skipping recategorization")
+                    continue
                 
                 # Recategorize
                 categories = document_processor._categorize_text(preprocessed_text)
@@ -420,13 +447,40 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
                 "structured_categories": structured_categories
             }
         
+        # Get all preprocessed texts, handling missing fields gracefully
+        all_texts = []
+        for doc in documents.values():
+            if "preprocessed_text" in doc and doc["preprocessed_text"]:
+                all_texts.append(doc["preprocessed_text"])
+            elif "full_text" in doc and doc["full_text"]:
+                # Fallback to full_text if preprocessed_text is missing
+                logger.warning(f"Document {doc.get('id', 'unknown')} missing preprocessed_text, using full_text")
+                all_texts.append(doc["full_text"])
+            elif "content_file" in doc and doc["content_file"]:
+                # Load content from separate file
+                try:
+                    with open(doc["content_file"], 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    all_texts.append(content)
+                    logger.info(f"Loaded content from {doc['content_file']} for clustering")
+                except Exception as e:
+                    logger.error(f"Error loading content file {doc['content_file']}: {e}")
+            else:
+                logger.warning(f"Document {doc.get('id', 'unknown')} has no text content, skipping")
+        
+        # Adjust cluster count based on available texts
+        adjusted_clusters = clusters
+        adjustment_message = ""
+        
         if doc_count < clusters:
             adjusted_clusters = doc_count
             adjustment_message = f" (adjusted from {clusters} due to document count)"
             logger.info(f"Adjusted clusters from {clusters} to {adjusted_clusters} due to document count")
         
-        # Get all preprocessed texts
-        all_texts = [doc["preprocessed_text"] for doc in documents.values()]
+        if len(all_texts) < adjusted_clusters:
+            adjusted_clusters = len(all_texts)
+            adjustment_message = f" (adjusted from {clusters} to {adjusted_clusters} due to valid text count)"
+            logger.info(f"Adjusted clusters to {adjusted_clusters} due to valid text count")
         
         # Create a new model with the specified number of clusters
         document_processor.model = KMeans(n_clusters=adjusted_clusters, random_state=42)

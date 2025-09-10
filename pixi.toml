@@ -23,6 +23,13 @@ pytest = ">=8.4.2,<9"
 pytest-cov = ">=7.0.0,<8"
 pytest-mock = ">=3.15.0,<4"
 pytest-asyncio = ">=1.2.0,<2"
+requests = "*"
+aiohttp = "*"
+aiofiles = "*"
 
 [tasks]
 start = "python main.py"
+test-pdf-categorization = "python test_pdf_categorization.py"
+test-openlibrary-pdfs = "python test_openlibrary_pdfs.py"
+test-openlibrary-improved = "python test_openlibrary_pdfs_improved.py"
+test-openlibrary-integrated = "python test_openlibrary_integrated.py"

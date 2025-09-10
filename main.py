@@ -482,6 +482,12 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
             adjustment_message = f" (adjusted from {clusters} to {adjusted_clusters} due to valid text count)"
             logger.info(f"Adjusted clusters to {adjusted_clusters} due to valid text count")
         
+        # Ensure minimum of 2 clusters for K-means
+        if adjusted_clusters < 2:
+            adjusted_clusters = 2
+            adjustment_message = f" (adjusted to minimum 2 clusters)"
+            logger.info(f"Adjusted to minimum 2 clusters")
+        
         # Create a new model with the specified number of clusters
         document_processor.model = KMeans(n_clusters=adjusted_clusters, random_state=42)
         

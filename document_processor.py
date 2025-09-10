@@ -195,7 +195,7 @@ class DocumentProcessor:
         return result["text"]
     
     def _preprocess_text(self, text):
-        """Clean and preprocess the extracted text"""
+        """Clean and preprocess the extracted text with improved filtering"""
         # Handle error messages
         if text.startswith("Error:"):
             return text
@@ -207,17 +207,36 @@ class DocumentProcessor:
             # Convert to lowercase
             text = text.lower()
             
-            # Remove special characters and numbers
+            # Remove Greek characters and other non-Latin scripts
+            text = re.sub(r'[\u0370-\u03FF\u1F00-\u1FFF]', ' ', text)  # Greek characters
+            text = re.sub(r'[\u0400-\u04FF]', ' ', text)  # Cyrillic characters
+            text = re.sub(r'[\u4E00-\u9FFF]', ' ', text)  # Chinese characters
+            text = re.sub(r'[\u0600-\u06FF]', ' ', text)  # Arabic characters
+            
+            # Remove special characters, numbers, and meaningless fragments
             text = re.sub(r'[^\w\s]', ' ', text)
             text = re.sub(r'\d+', ' ', text)
+            
+            # Remove very short words and meaningless fragments
+            text = re.sub(r'\b\w{1,2}\b', ' ', text)  # Remove 1-2 character words
+            text = re.sub(r'\b[a-z]{1}\b', ' ', text)  # Remove single letters
+            
+            # Remove common meaningless fragments
+            meaningless_fragments = ['eft', 'quot', 'ratione', 'quam', 'corpus', 'ad', 'ut', 'et', 'in', 'de', 'la', 'le', 'du', 'des', 'les', 'un', 'une', 'il', 'elle', 'nous', 'vous', 'ils', 'elles']
+            for fragment in meaningless_fragments:
+                text = re.sub(r'\b' + fragment + r'\b', ' ', text)
             
             # Remove extra whitespaces
             text = re.sub(r'\s+', ' ', text).strip()
             
             # Tokenize and remove stopwords
             stop_words = set(stopwords.words('english'))
+            # Add more stopwords for better filtering
+            additional_stopwords = {'said', 'says', 'would', 'could', 'should', 'might', 'may', 'must', 'shall', 'will', 'can', 'cannot', 'couldnt', 'wouldnt', 'shouldnt', 'dont', 'doesnt', 'didnt', 'wont', 'cant', 'shant', 'aint', 'arent', 'isnt', 'wasnt', 'werent', 'havent', 'hasnt', 'hadnt', 'do', 'does', 'did', 'done', 'doing', 'go', 'goes', 'went', 'gone', 'going', 'get', 'gets', 'got', 'gotten', 'getting', 'come', 'comes', 'came', 'coming', 'see', 'sees', 'saw', 'seen', 'seeing', 'know', 'knows', 'knew', 'known', 'knowing', 'think', 'thinks', 'thought', 'thinking', 'make', 'makes', 'made', 'making', 'take', 'takes', 'took', 'taken', 'taking', 'give', 'gives', 'gave', 'given', 'giving', 'find', 'finds', 'found', 'finding', 'look', 'looks', 'looked', 'looking', 'use', 'uses', 'used', 'using', 'work', 'works', 'worked', 'working', 'call', 'calls', 'called', 'calling', 'try', 'tries', 'tried', 'trying', 'ask', 'asks', 'asked', 'asking', 'need', 'needs', 'needed', 'needing', 'feel', 'feels', 'felt', 'feeling', 'become', 'becomes', 'became', 'becoming', 'leave', 'leaves', 'left', 'leaving', 'put', 'puts', 'putting', 'tell', 'tells', 'told', 'telling', 'seem', 'seems', 'seemed', 'seeming', 'let', 'lets', 'letting', 'help', 'helps', 'helped', 'helping', 'keep', 'keeps', 'kept', 'keeping', 'turn', 'turns', 'turned', 'turning', 'start', 'starts', 'started', 'starting', 'show', 'shows', 'showed', 'showing', 'hear', 'hears', 'heard', 'hearing', 'play', 'plays', 'played', 'playing', 'run', 'runs', 'ran', 'running', 'move', 'moves', 'moved', 'moving', 'live', 'lives', 'lived', 'living', 'believe', 'believes', 'believed', 'believing', 'hold', 'holds', 'held', 'holding', 'bring', 'brings', 'brought', 'bringing', 'happen', 'happens', 'happened', 'happening', 'write', 'writes', 'wrote', 'written', 'writing', 'provide', 'provides', 'provided', 'providing', 'sit', 'sits', 'sat', 'sitting', 'stand', 'stands', 'stood', 'standing', 'lose', 'loses', 'lost', 'losing', 'pay', 'pays', 'paid', 'paying', 'meet', 'meets', 'met', 'meeting', 'include', 'includes', 'included', 'including', 'continue', 'continues', 'continued', 'continuing', 'set', 'sets', 'setting', 'learn', 'learns', 'learned', 'learning', 'change', 'changes', 'changed', 'changing', 'lead', 'leads', 'led', 'leading', 'understand', 'understands', 'understood', 'understanding', 'watch', 'watches', 'watched', 'watching', 'follow', 'follows', 'followed', 'following', 'stop', 'stops', 'stopped', 'stopping', 'create', 'creates', 'created', 'creating', 'speak', 'speaks', 'spoke', 'spoken', 'speaking', 'read', 'reads', 'reading', 'allow', 'allows', 'allowed', 'allowing', 'add', 'adds', 'added', 'adding', 'spend', 'spends', 'spent', 'spending', 'grow', 'grows', 'grew', 'grown', 'growing', 'open', 'opens', 'opened', 'opening', 'walk', 'walks', 'walked', 'walking', 'win', 'wins', 'won', 'winning', 'offer', 'offers', 'offered', 'offering', 'remember', 'remembers', 'remembered', 'remembering', 'love', 'loves', 'loved', 'loving', 'consider', 'considers', 'considered', 'considering', 'appear', 'appears', 'appeared', 'appearing', 'buy', 'buys', 'bought', 'buying', 'wait', 'waits', 'waited', 'waiting', 'serve', 'serves', 'served', 'serving', 'die', 'dies', 'died', 'dying', 'send', 'sends', 'sent', 'sending', 'expect', 'expects', 'expected', 'expecting', 'build', 'builds', 'built', 'building', 'stay', 'stays', 'stayed', 'staying', 'fall', 'falls', 'fell', 'fallen', 'falling', 'cut', 'cuts', 'cutting', 'reach', 'reaches', 'reached', 'reaching', 'kill', 'kills', 'killed', 'killing', 'remain', 'remains', 'remained', 'remaining', 'suggest', 'suggests', 'suggested', 'suggesting', 'raise', 'raises', 'raised', 'raising', 'pass', 'passes', 'passed', 'passing', 'sell', 'sells', 'sold', 'selling', 'require', 'requires', 'required', 'requiring', 'report', 'reports', 'reported', 'reporting', 'decide', 'decides', 'decided', 'deciding', 'pull', 'pulls', 'pulled', 'pulling'}
+            stop_words.update(additional_stopwords)
+            
             tokens = word_tokenize(text)
-            filtered_tokens = [word for word in tokens if word not in stop_words]
+            filtered_tokens = [word for word in tokens if word not in stop_words and len(word) >= 3]
             
             processed_text = ' '.join(filtered_tokens)
             logging.info(f"Preprocessed text length: {len(processed_text)}")
@@ -311,24 +330,13 @@ class DocumentProcessor:
             # If we have more than 5 documents and the model is fitted
             if doc_count >= 5 and hasattr(self.model, 'cluster_centers_'):
                 try:
-                    # Transform the text and predict cluster
+                    # Transform the text and get soft categories
                     text_vector = self.vectorizer.transform([preprocessed_text])
-                    cluster = self.model.predict(text_vector)[0]
-                    logging.info(f"Document assigned to cluster {cluster}")
-                    
-                    # Store cluster ID for later use in category generation (convert numpy int to Python int)
-                    self._current_cluster_id = int(cluster)
-                    
-                    # Return the corresponding category
-                    if 0 <= cluster < len(self.document_index["categories"]):
-                        category = self.document_index["categories"][cluster]
-                        logging.info(f"Assigned category: {category}")
-                        return [category]
-                    else:
-                        logging.warning(f"Cluster {cluster} out of range for categories, using Uncategorized")
-                        return ["Uncategorized"]
+                    categories = self._generate_soft_categories(text_vector, threshold=0.2)
+                    logging.info(f"Document assigned to categories: {categories}")
+                    return categories
                 except Exception as e:
-                    logging.error(f"Error predicting cluster: {e}")
+                    logging.error(f"Error in soft categorization: {e}")
                     logging.error(traceback.format_exc())
                     return ["Uncategorized"]
             else:
@@ -437,14 +445,17 @@ class DocumentProcessor:
             
             # Filter out meaningless short terms and common words
             meaningful_terms = []
-            stop_words = set(['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'must', 'shall'])
+            stop_words = set(['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'must', 'shall', 'said', 'says', 'time', 'way', 'day', 'man', 'woman', 'people', 'year', 'work', 'life', 'hand', 'eye', 'head', 'face', 'back', 'side', 'end', 'part', 'place', 'case', 'point', 'state', 'fact', 'thing', 'right', 'left', 'old', 'new', 'good', 'great', 'little', 'long', 'high', 'small', 'large', 'big', 'first', 'last', 'next', 'other', 'same', 'different', 'much', 'many', 'more', 'most', 'some', 'any', 'all', 'every', 'each', 'both', 'either', 'neither', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'hundred', 'thousand', 'million', 'billion'])
             
             for term in top_terms:
-                if len(term) > 2 and term.lower() not in stop_words and not term.isdigit():
+                if (len(term) > 3 and 
+                    term.lower() not in stop_words and 
+                    not term.isdigit() and
+                    not term in ['eft', 'quot', 'ratione', 'quam', 'corpus', 'ad', 'ut', 'et', 'καὶ', 'τῶν', 'τὴν']):
                     meaningful_terms.append(term)
             
             # Take top 3-5 meaningful terms
-            selected_terms = meaningful_terms[:5] if len(meaningful_terms) >= 5 else meaningful_terms
+            selected_terms = meaningful_terms[:3] if len(meaningful_terms) >= 3 else meaningful_terms
             
             # Analyze document types and content themes
             content_themes = self._identify_content_themes(documents)
@@ -524,18 +535,40 @@ class DocumentProcessor:
     def _determine_category_type(self, documents, content_themes):
         """Determine the most appropriate category type based on document analysis"""
         try:
-            # Count document types
-            doc_type_counts = {}
-            for doc in documents:
-                filename = doc.get('filename', '').lower()
-                if any(word in filename for word in ['report', 'analysis']):
-                    doc_type_counts['Report'] = doc_type_counts.get('Report', 0) + 1
-                elif any(word in filename for word in ['research', 'paper', 'study']):
-                    doc_type_counts['Research'] = doc_type_counts.get('Research', 0) + 1
-                elif any(word in filename for word in ['manual', 'guide']):
-                    doc_type_counts['Guide'] = doc_type_counts.get('Guide', 0) + 1
-                else:
-                    doc_type_counts['Document'] = doc_type_counts.get('Document', 0) + 1
+            # Analyze content themes to determine category type
+            primary_theme = content_themes.get('primary_theme', '')
+            subject_areas = content_themes.get('subject_areas', [])
+            
+            # Map themes to descriptive category types
+            if any(theme in primary_theme.lower() for theme in ['philosophy', 'philosophical', 'ethics', 'moral']):
+                return 'Philosophy'
+            elif any(theme in primary_theme.lower() for theme in ['literature', 'novel', 'story', 'fiction', 'poetry']):
+                return 'Literature'
+            elif any(theme in primary_theme.lower() for theme in ['science', 'scientific', 'research', 'study']):
+                return 'Science'
+            elif any(theme in primary_theme.lower() for theme in ['history', 'historical', 'ancient', 'classical']):
+                return 'History'
+            elif any(theme in primary_theme.lower() for theme in ['economics', 'economic', 'political', 'politics']):
+                return 'Economics'
+            elif any(theme in primary_theme.lower() for theme in ['technology', 'technical', 'programming', 'computer']):
+                return 'Technology'
+            elif any(theme in primary_theme.lower() for theme in ['children', 'child', 'youth', 'young']):
+                return 'Children'
+            elif any(theme in primary_theme.lower() for theme in ['business', 'industry', 'corporate']):
+                return 'Business'
+            else:
+                # Count document types as fallback
+                doc_type_counts = {}
+                for doc in documents:
+                    filename = doc.get('filename', '').lower()
+                    if any(word in filename for word in ['report', 'analysis']):
+                        doc_type_counts['Report'] = doc_type_counts.get('Report', 0) + 1
+                    elif any(word in filename for word in ['research', 'paper', 'study']):
+                        doc_type_counts['Research'] = doc_type_counts.get('Research', 0) + 1
+                    elif any(word in filename for word in ['manual', 'guide']):
+                        doc_type_counts['Guide'] = doc_type_counts.get('Guide', 0) + 1
+                    else:
+                        doc_type_counts['Document'] = doc_type_counts.get('Document', 0) + 1
             
             # Return most common type, or use content theme
             if doc_type_counts:

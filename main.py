@@ -11,6 +11,8 @@ import threading
 import json
 import pickle
 from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.decomposition import LatentDirichletAllocation
 import datetime
 
 from document_processor import DocumentProcessor
@@ -482,18 +484,33 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)):
             adjustment_message = f" (adjusted from {clusters} to {adjusted_clusters} due to valid text count)"
             logger.info(f"Adjusted clusters to {adjusted_clusters} due to valid text count")
         
-        # Ensure minimum of 2 clusters for K-means
+        # Ensure minimum of 2 topics for LDA
         if adjusted_clusters < 2:
             adjusted_clusters = 2
-            adjustment_message = f" (adjusted to minimum 2 clusters)"
-            logger.info(f"Adjusted to minimum 2 clusters")
+            adjustment_message = f" (adjusted to minimum 2 topics)"
+            logger.info(f"Adjusted to minimum 2 topics")
         
-        # Create a new model with the specified number of clusters
-        document_processor.model = KMeans(n_clusters=adjusted_clusters, random_state=42)
+        # Create a new LDA model with the specified number of topics
+        document_processor.model = LatentDirichletAllocation(
+            n_components=adjusted_clusters,
+            random_state=42,
+            max_iter=100,
+            learning_method='online',
+            learning_offset=50.0
+        )
+        
+        # Update vectorizer to CountVectorizer for LDA
+        document_processor.vectorizer = CountVectorizer(
+            max_features=1000,
+            stop_words='english',
+            ngram_range=(1, 3),
+            min_df=1,
+            max_df=0.8
+        )
         
         # Re-fit the vectorizer and model
         try:
-            logger.info(f"Fitting vectorizer and model with {adjusted_clusters} clusters")
+            logger.info(f"Fitting vectorizer and model with {adjusted_clusters} topics")
             text_vectors = document_processor.vectorizer.fit_transform(all_texts)
             document_processor.model.fit(text_vectors)
             

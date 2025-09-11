@@ -7,9 +7,13 @@ import pypdf
 from pdf2image import convert_from_path
 import nltk
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from sklearn.feature_extraction.text import TfidfVectorizer
+from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.tag import pos_tag
+from nltk.chunk import ne_chunk
+from nltk.tree import Tree
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.cluster import KMeans
+from sklearn.decomposition import LatentDirichletAllocation
 import numpy as np
 import pickle
 import re
@@ -19,11 +23,16 @@ import logging
 import traceback
 import hashlib
 import datetime
+from collections import Counter
+import itertools
 
 # Download necessary NLTK data
 try:
     nltk.download('punkt', quiet=True)
     nltk.download('stopwords', quiet=True)
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+    nltk.download('maxent_ne_chunker', quiet=True)
+    nltk.download('words', quiet=True)
 except Exception as e:
     logging.error(f"Error downloading NLTK data: {e}")
 
@@ -79,20 +88,22 @@ class DocumentProcessor:
                 logging.info("Loaded existing categorization model")
             else:
                 # Initial model with default parameters
-                self.vectorizer = TfidfVectorizer(
+                self.vectorizer = CountVectorizer(
                     max_features=1000,
-                    stop_words='english'
+                    stop_words='english',
+                    ngram_range=(1, 3)
                 )
-                self.model = KMeans(n_clusters=8, random_state=42)
+                self.model = LatentDirichletAllocation(n_components=8, random_state=42, max_iter=100)
                 logging.info("Created new categorization model")
         except Exception as e:
             logging.error(f"Error initializing model: {e}")
             # Fallback to new model
-            self.vectorizer = TfidfVectorizer(
+            self.vectorizer = CountVectorizer(
                 max_features=1000,
-                stop_words='english'
+                stop_words='english',
+                ngram_range=(1, 3)
             )
-            self.model = KMeans(n_clusters=8, random_state=42)
+            self.model = LatentDirichletAllocation(n_components=8, random_state=42, max_iter=100)
     
     def _extract_text_from_pdf(self, file_path, timeout=120):
         """Extract text content from PDF files with timeout protection"""
@@ -195,7 +206,7 @@ class DocumentProcessor:
         return result["text"]
     
     def _preprocess_text(self, text):
-        """Clean and preprocess the extracted text with improved filtering"""
+        """Enhanced text preprocessing that keeps meaningful words and extracts key phrases"""
         # Handle error messages
         if text.startswith("Error:"):
             return text
@@ -213,38 +224,199 @@ class DocumentProcessor:
             text = re.sub(r'[\u4E00-\u9FFF]', ' ', text)  # Chinese characters
             text = re.sub(r'[\u0600-\u06FF]', ' ', text)  # Arabic characters
             
-            # Remove special characters, numbers, and meaningless fragments
-            text = re.sub(r'[^\w\s]', ' ', text)
+            # Remove special characters but keep hyphens for compound words
+            text = re.sub(r'[^\w\s-]', ' ', text)
             text = re.sub(r'\d+', ' ', text)
-            
-            # Remove very short words and meaningless fragments
-            text = re.sub(r'\b\w{1,2}\b', ' ', text)  # Remove 1-2 character words
-            text = re.sub(r'\b[a-z]{1}\b', ' ', text)  # Remove single letters
-            
-            # Remove common meaningless fragments
-            meaningless_fragments = ['eft', 'quot', 'ratione', 'quam', 'corpus', 'ad', 'ut', 'et', 'in', 'de', 'la', 'le', 'du', 'des', 'les', 'un', 'une', 'il', 'elle', 'nous', 'vous', 'ils', 'elles']
-            for fragment in meaningless_fragments:
-                text = re.sub(r'\b' + fragment + r'\b', ' ', text)
             
             # Remove extra whitespaces
             text = re.sub(r'\s+', ' ', text).strip()
             
-            # Tokenize and remove stopwords
+            # Tokenize and POS tag
+            tokens = word_tokenize(text)
+            pos_tags = pos_tag(tokens)
+            
+            # Enhanced stopwords - keep meaningful words
             stop_words = set(stopwords.words('english'))
-            # Add more stopwords for better filtering
-            additional_stopwords = {'said', 'says', 'would', 'could', 'should', 'might', 'may', 'must', 'shall', 'will', 'can', 'cannot', 'couldnt', 'wouldnt', 'shouldnt', 'dont', 'doesnt', 'didnt', 'wont', 'cant', 'shant', 'aint', 'arent', 'isnt', 'wasnt', 'werent', 'havent', 'hasnt', 'hadnt', 'do', 'does', 'did', 'done', 'doing', 'go', 'goes', 'went', 'gone', 'going', 'get', 'gets', 'got', 'gotten', 'getting', 'come', 'comes', 'came', 'coming', 'see', 'sees', 'saw', 'seen', 'seeing', 'know', 'knows', 'knew', 'known', 'knowing', 'think', 'thinks', 'thought', 'thinking', 'make', 'makes', 'made', 'making', 'take', 'takes', 'took', 'taken', 'taking', 'give', 'gives', 'gave', 'given', 'giving', 'find', 'finds', 'found', 'finding', 'look', 'looks', 'looked', 'looking', 'use', 'uses', 'used', 'using', 'work', 'works', 'worked', 'working', 'call', 'calls', 'called', 'calling', 'try', 'tries', 'tried', 'trying', 'ask', 'asks', 'asked', 'asking', 'need', 'needs', 'needed', 'needing', 'feel', 'feels', 'felt', 'feeling', 'become', 'becomes', 'became', 'becoming', 'leave', 'leaves', 'left', 'leaving', 'put', 'puts', 'putting', 'tell', 'tells', 'told', 'telling', 'seem', 'seems', 'seemed', 'seeming', 'let', 'lets', 'letting', 'help', 'helps', 'helped', 'helping', 'keep', 'keeps', 'kept', 'keeping', 'turn', 'turns', 'turned', 'turning', 'start', 'starts', 'started', 'starting', 'show', 'shows', 'showed', 'showing', 'hear', 'hears', 'heard', 'hearing', 'play', 'plays', 'played', 'playing', 'run', 'runs', 'ran', 'running', 'move', 'moves', 'moved', 'moving', 'live', 'lives', 'lived', 'living', 'believe', 'believes', 'believed', 'believing', 'hold', 'holds', 'held', 'holding', 'bring', 'brings', 'brought', 'bringing', 'happen', 'happens', 'happened', 'happening', 'write', 'writes', 'wrote', 'written', 'writing', 'provide', 'provides', 'provided', 'providing', 'sit', 'sits', 'sat', 'sitting', 'stand', 'stands', 'stood', 'standing', 'lose', 'loses', 'lost', 'losing', 'pay', 'pays', 'paid', 'paying', 'meet', 'meets', 'met', 'meeting', 'include', 'includes', 'included', 'including', 'continue', 'continues', 'continued', 'continuing', 'set', 'sets', 'setting', 'learn', 'learns', 'learned', 'learning', 'change', 'changes', 'changed', 'changing', 'lead', 'leads', 'led', 'leading', 'understand', 'understands', 'understood', 'understanding', 'watch', 'watches', 'watched', 'watching', 'follow', 'follows', 'followed', 'following', 'stop', 'stops', 'stopped', 'stopping', 'create', 'creates', 'created', 'creating', 'speak', 'speaks', 'spoke', 'spoken', 'speaking', 'read', 'reads', 'reading', 'allow', 'allows', 'allowed', 'allowing', 'add', 'adds', 'added', 'adding', 'spend', 'spends', 'spent', 'spending', 'grow', 'grows', 'grew', 'grown', 'growing', 'open', 'opens', 'opened', 'opening', 'walk', 'walks', 'walked', 'walking', 'win', 'wins', 'won', 'winning', 'offer', 'offers', 'offered', 'offering', 'remember', 'remembers', 'remembered', 'remembering', 'love', 'loves', 'loved', 'loving', 'consider', 'considers', 'considered', 'considering', 'appear', 'appears', 'appeared', 'appearing', 'buy', 'buys', 'bought', 'buying', 'wait', 'waits', 'waited', 'waiting', 'serve', 'serves', 'served', 'serving', 'die', 'dies', 'died', 'dying', 'send', 'sends', 'sent', 'sending', 'expect', 'expects', 'expected', 'expecting', 'build', 'builds', 'built', 'building', 'stay', 'stays', 'stayed', 'staying', 'fall', 'falls', 'fell', 'fallen', 'falling', 'cut', 'cuts', 'cutting', 'reach', 'reaches', 'reached', 'reaching', 'kill', 'kills', 'killed', 'killing', 'remain', 'remains', 'remained', 'remaining', 'suggest', 'suggests', 'suggested', 'suggesting', 'raise', 'raises', 'raised', 'raising', 'pass', 'passes', 'passed', 'passing', 'sell', 'sells', 'sold', 'selling', 'require', 'requires', 'required', 'requiring', 'report', 'reports', 'reported', 'reporting', 'decide', 'decides', 'decided', 'deciding', 'pull', 'pulls', 'pulled', 'pulling'}
+            # Remove common but less meaningful words
+            additional_stopwords = {
+                'said', 'says', 'would', 'could', 'should', 'might', 'may', 'must', 'shall', 'will',
+                'can', 'cannot', 'couldnt', 'wouldnt', 'shouldnt', 'dont', 'doesnt', 'didnt', 'wont', 'cant',
+                'shant', 'aint', 'arent', 'isnt', 'wasnt', 'werent', 'havent', 'hasnt', 'hadnt',
+                'do', 'does', 'did', 'done', 'doing', 'go', 'goes', 'went', 'gone', 'going',
+                'get', 'gets', 'got', 'gotten', 'getting', 'come', 'comes', 'came', 'coming',
+                'see', 'sees', 'saw', 'seen', 'seeing', 'know', 'knows', 'knew', 'known', 'knowing',
+                'think', 'thinks', 'thought', 'thinking', 'make', 'makes', 'made', 'making',
+                'take', 'takes', 'took', 'taken', 'taking', 'give', 'gives', 'gave', 'given', 'giving',
+                'find', 'finds', 'found', 'finding', 'look', 'looks', 'looked', 'looking',
+                'use', 'uses', 'used', 'using', 'work', 'works', 'worked', 'working',
+                'call', 'calls', 'called', 'calling', 'try', 'tries', 'tried', 'trying',
+                'ask', 'asks', 'asked', 'asking', 'need', 'needs', 'needed', 'needing',
+                'feel', 'feels', 'felt', 'feeling', 'become', 'becomes', 'became', 'becoming',
+                'leave', 'leaves', 'left', 'leaving', 'put', 'puts', 'putting',
+                'tell', 'tells', 'told', 'telling', 'seem', 'seems', 'seemed', 'seeming',
+                'let', 'lets', 'letting', 'help', 'helps', 'helped', 'helping',
+                'keep', 'keeps', 'kept', 'keeping', 'turn', 'turns', 'turned', 'turning',
+                'start', 'starts', 'started', 'starting', 'show', 'shows', 'showed', 'showing',
+                'hear', 'hears', 'heard', 'hearing', 'play', 'plays', 'played', 'playing',
+                'run', 'runs', 'ran', 'running', 'move', 'moves', 'moved', 'moving',
+                'live', 'lives', 'lived', 'living', 'believe', 'believes', 'believed', 'believing',
+                'hold', 'holds', 'held', 'holding', 'bring', 'brings', 'brought', 'bringing',
+                'happen', 'happens', 'happened', 'happening', 'write', 'writes', 'wrote', 'written', 'writing',
+                'provide', 'provides', 'provided', 'providing', 'sit', 'sits', 'sat', 'sitting',
+                'stand', 'stands', 'stood', 'standing', 'lose', 'loses', 'lost', 'losing',
+                'pay', 'pays', 'paid', 'paying', 'meet', 'meets', 'met', 'meeting',
+                'include', 'includes', 'included', 'including', 'continue', 'continues', 'continued', 'continuing',
+                'set', 'sets', 'setting', 'learn', 'learns', 'learned', 'learning',
+                'change', 'changes', 'changed', 'changing', 'lead', 'leads', 'led', 'leading',
+                'understand', 'understands', 'understood', 'understanding',
+                'watch', 'watches', 'watched', 'watching', 'follow', 'follows', 'followed', 'following',
+                'stop', 'stops', 'stopped', 'stopping', 'create', 'creates', 'created', 'creating',
+                'speak', 'speaks', 'spoke', 'spoken', 'speaking', 'read', 'reads', 'reading',
+                'allow', 'allows', 'allowed', 'allowing', 'add', 'adds', 'added', 'adding',
+                'spend', 'spends', 'spent', 'spending', 'grow', 'grows', 'grew', 'grown', 'growing',
+                'open', 'opens', 'opened', 'opening', 'walk', 'walks', 'walked', 'walking',
+                'win', 'wins', 'won', 'winning', 'offer', 'offers', 'offered', 'offering',
+                'remember', 'remembers', 'remembered', 'remembering', 'love', 'loves', 'loved', 'loving',
+                'consider', 'considers', 'considered', 'considering', 'appear', 'appears', 'appeared', 'appearing',
+                'buy', 'buys', 'bought', 'buying', 'wait', 'waits', 'waited', 'waiting',
+                'serve', 'serves', 'served', 'serving', 'die', 'dies', 'died', 'dying',
+                'send', 'sends', 'sent', 'sending', 'expect', 'expects', 'expected', 'expecting',
+                'build', 'builds', 'built', 'building', 'stay', 'stays', 'stayed', 'staying',
+                'fall', 'falls', 'fell', 'fallen', 'falling', 'cut', 'cuts', 'cutting',
+                'reach', 'reaches', 'reached', 'reaching', 'kill', 'kills', 'killed', 'killing',
+                'remain', 'remains', 'remained', 'remaining', 'suggest', 'suggests', 'suggested', 'suggesting',
+                'raise', 'raises', 'raised', 'raising', 'pass', 'passes', 'passed', 'passing',
+                'sell', 'sells', 'sold', 'selling', 'require', 'requires', 'required', 'requiring',
+                'report', 'reports', 'reported', 'reporting', 'decide', 'decides', 'decided', 'deciding',
+                'pull', 'pulls', 'pulled', 'pulling', 'like', 'ofthe', 'things', 'posterior', 'anterior', 'surface'
+            }
             stop_words.update(additional_stopwords)
             
-            tokens = word_tokenize(text)
-            filtered_tokens = [word for word in tokens if word not in stop_words and len(word) >= 3]
+            # Filter tokens based on POS tags and meaningfulness
+            meaningful_tokens = []
+            for token, pos in pos_tags:
+                # Keep nouns, adjectives, and meaningful words
+                if (pos.startswith('NN') or pos.startswith('JJ') or pos.startswith('VB')) and \
+                   len(token) >= 3 and \
+                   token not in stop_words and \
+                   not token.isdigit():
+                    meaningful_tokens.append(token)
             
-            processed_text = ' '.join(filtered_tokens)
+            # Extract key phrases (bigrams and trigrams)
+            key_phrases = self._extract_key_phrases(meaningful_tokens)
+            
+            # Combine meaningful tokens with key phrases
+            all_terms = meaningful_tokens + key_phrases
+            
+            processed_text = ' '.join(all_terms)
             logging.info(f"Preprocessed text length: {len(processed_text)}")
             
             return processed_text
         except Exception as e:
             logging.error(f"Error preprocessing text: {e}")
             return text
+    
+    def _extract_key_phrases(self, tokens):
+        """Extract meaningful key phrases (bigrams and trigrams)"""
+        try:
+            # Extract bigrams
+            bigrams = list(itertools.combinations(tokens, 2))
+            bigram_phrases = [' '.join(bigram) for bigram in bigrams if len(bigram[0]) >= 3 and len(bigram[1]) >= 3]
+            
+            # Extract trigrams
+            trigrams = list(itertools.combinations(tokens, 3))
+            trigram_phrases = [' '.join(trigram) for trigram in trigrams if all(len(word) >= 3 for word in trigram)]
+            
+            # Count frequency and return most common phrases
+            all_phrases = bigram_phrases + trigram_phrases
+            phrase_counts = Counter(all_phrases)
+            
+            # Return phrases that appear at least twice
+            return [phrase for phrase, count in phrase_counts.most_common(20) if count >= 2]
+        except Exception as e:
+            logging.error(f"Error extracting key phrases: {e}")
+            return []
+    
+    def _get_lda_topic_name(self, topic_id):
+        """Generate a meaningful name for an LDA topic"""
+        try:
+            if not hasattr(self.model, 'components_'):
+                return None
+            
+            # Get top terms for this topic
+            feature_names = self.vectorizer.get_feature_names_out()
+            topic_weights = self.model.components_[topic_id]
+            top_indices = topic_weights.argsort()[-10:][::-1]  # Top 10 terms
+            top_terms = [feature_names[i] for i in top_indices]
+            
+            # Filter out meaningless terms
+            meaningful_terms = []
+            stop_words = set(stopwords.words('english'))
+            meaningless_words = {'like', 'ofthe', 'things', 'posterior', 'anterior', 'surface', 'ofthe', 'things', 'like', 'ofthe', 'things', 'posterior', 'anterior', 'surface'}
+            
+            for term in top_terms:
+                if (len(term) >= 3 and 
+                    term.lower() not in stop_words and 
+                    term.lower() not in meaningless_words and
+                    not term.isdigit()):
+                    meaningful_terms.append(term)
+            
+            # Take top 5-8 meaningful terms
+            selected_terms = meaningful_terms[:8] if len(meaningful_terms) >= 8 else meaningful_terms
+            
+            if not selected_terms:
+                return f"Topic {topic_id + 1}"
+            
+            # Determine topic type based on terms
+            topic_type = self._determine_topic_type(selected_terms)
+            
+            # Create hierarchical category name
+            if len(selected_terms) >= 3:
+                category_name = f"{topic_type}: {', '.join(selected_terms[:5])}"
+            else:
+                category_name = f"{topic_type}: {', '.join(selected_terms)}"
+            
+            return category_name
+            
+        except Exception as e:
+            logging.error(f"Error generating LDA topic name: {e}")
+            return f"Topic {topic_id + 1}"
+    
+    def _determine_topic_type(self, terms):
+        """Determine the type of topic based on terms"""
+        try:
+            # Convert to lowercase for comparison
+            terms_lower = [term.lower() for term in terms]
+            
+            # Define topic type keywords
+            topic_keywords = {
+                'Philosophy': ['philosophy', 'philosophical', 'ethics', 'moral', 'virtue', 'justice', 'kant', 'aristotle', 'plato', 'ethics', 'moral', 'virtue', 'justice', 'kant', 'aristotle', 'plato'],
+                'Science': ['science', 'scientific', 'research', 'study', 'mathematics', 'geometry', 'theorem', 'proof', 'euclid', 'mathematical', 'physics', 'chemistry', 'biology'],
+                'Literature': ['literature', 'literary', 'novel', 'story', 'fiction', 'poetry', 'poem', 'author', 'writer', 'book', 'chapter', 'character'],
+                'History': ['history', 'historical', 'ancient', 'classical', 'empire', 'war', 'battle', 'century', 'period', 'civilization'],
+                'Technology': ['technology', 'technical', 'programming', 'computer', 'software', 'hardware', 'algorithm', 'data', 'system', 'digital'],
+                'Art': ['art', 'artistic', 'painting', 'sculpture', 'design', 'creative', 'aesthetic', 'beauty', 'artist', 'gallery'],
+                'Medicine': ['medicine', 'medical', 'health', 'disease', 'treatment', 'patient', 'doctor', 'hospital', 'surgery', 'anatomy'],
+                'Economics': ['economics', 'economic', 'financial', 'money', 'business', 'market', 'trade', 'commerce', 'industry', 'capital']
+            }
+            
+            # Count matches for each topic type
+            topic_scores = {}
+            for topic_type, keywords in topic_keywords.items():
+                score = sum(1 for term in terms_lower if any(keyword in term for keyword in keywords))
+                topic_scores[topic_type] = score
+            
+            # Return the topic type with highest score, or default to "Document"
+            if topic_scores:
+                best_topic = max(topic_scores, key=topic_scores.get)
+                if topic_scores[best_topic] > 0:
+                    return best_topic
+            
+            return "Document"
+            
+        except Exception as e:
+            logging.error(f"Error determining topic type: {e}")
+            return "Document"
     
     def _categorize_text(self, text):
         """Determine categories for the document based on content"""
@@ -328,15 +500,36 @@ class DocumentProcessor:
                     logging.error(traceback.format_exc())
             
             # If we have more than 5 documents and the model is fitted
-            if doc_count >= 5 and hasattr(self.model, 'cluster_centers_'):
+            if doc_count >= 5 and hasattr(self.model, 'components_'):
                 try:
-                    # Transform the text and get soft categories
+                    # Transform the text and get topic probabilities
                     text_vector = self.vectorizer.transform([preprocessed_text])
-                    categories = self._generate_soft_categories(text_vector, threshold=0.2)
+                    topic_probs = self.model.transform(text_vector)[0]
+                    
+                    # Get top topics with probability > threshold
+                    threshold = 0.1
+                    top_topics = []
+                    for i, prob in enumerate(topic_probs):
+                        if prob > threshold:
+                            top_topics.append((i, prob))
+                    
+                    # Sort by probability
+                    top_topics.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Generate category names for top topics
+                    categories = []
+                    for topic_id, prob in top_topics[:3]:  # Top 3 topics
+                        category_name = self._get_lda_topic_name(topic_id)
+                        if category_name:
+                            categories.append(category_name)
+                    
+                    if not categories:
+                        categories = ["Uncategorized"]
+                    
                     logging.info(f"Document assigned to categories: {categories}")
                     return categories
                 except Exception as e:
-                    logging.error(f"Error in soft categorization: {e}")
+                    logging.error(f"Error in LDA categorization: {e}")
                     logging.error(traceback.format_exc())
                     return ["Uncategorized"]
             else:
@@ -350,7 +543,7 @@ class DocumentProcessor:
             return ["Error"]
     
     def _generate_category_names(self):
-        """Generate meaningful category names based on document content analysis"""
+        """Generate meaningful category names based on LDA topic analysis"""
         try:
             # Get all documents for analysis
             documents = self.document_index.get("documents", {})
@@ -359,93 +552,154 @@ class DocumentProcessor:
                 logging.warning("No documents found for category generation")
                 return
             
-            # Analyze document content to generate meaningful categories
-            cluster_assignments = self.model.labels_
+            # Check if we have LDA model with components
+            if not hasattr(self.model, 'components_'):
+                logging.warning("Model not fitted or not LDA model")
+                return
+            
+            # Generate category names for each LDA topic
             feature_names = self.vectorizer.get_feature_names_out()
-            cluster_centers = self.model.cluster_centers_
+            n_topics = self.model.n_components
             
-            # Group documents by cluster using model labels
-            cluster_docs = {}
-            doc_list = list(documents.values())
+            # Clear existing categories
+            self.document_index["categories"] = []
             
-            # Get all texts for clustering
-            all_texts = []
-            for doc in doc_list:
-                if "preprocessed_text" in doc and doc["preprocessed_text"]:
-                    all_texts.append(doc["preprocessed_text"])
-                elif "full_text" in doc and doc["full_text"]:
-                    all_texts.append(doc["full_text"])
-                elif "content_file" in doc and doc["content_file"]:
-                    try:
-                        with open(doc["content_file"], 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        all_texts.append(content)
-                    except Exception as e:
-                        logging.error(f"Error loading content file {doc['content_file']}: {e}")
-                        all_texts.append("")
-                else:
-                    all_texts.append("")
+            # Generate meaningful names for each topic
+            for topic_id in range(n_topics):
+                category_name = self._get_lda_topic_name(topic_id)
+                if category_name:
+                    self.document_index["categories"].append(category_name)
+                    logging.info(f"Generated category: {category_name}")
             
-            # Transform texts and get cluster assignments
-            if all_texts:
-                text_vectors = self.vectorizer.transform(all_texts)
-                cluster_assignments = self.model.predict(text_vectors)
-                
-                # Group documents by cluster
-                for i, doc in enumerate(doc_list):
-                    cluster_id = cluster_assignments[i]
-                    if cluster_id not in cluster_docs:
-                        cluster_docs[cluster_id] = []
-                    cluster_docs[cluster_id].append(doc)
-            
-            categories = []
-            all_category_names = set()
-            
-            for cluster_id in range(len(cluster_centers)):
-                if cluster_id not in cluster_docs:
-                    continue
-                    
-                cluster_documents = cluster_docs[cluster_id]
-                
-                # Analyze the content of documents in this cluster
-                category_info = self._analyze_cluster_content(cluster_documents, cluster_id, feature_names, cluster_centers)
-                
-                # Create meaningful category name
-                category_name = f"{category_info['type']}: {category_info['description']}"
-                
-                # Ensure uniqueness
-                base_name = category_name
-                counter = 1
-                while category_name in all_category_names:
-                    category_name = f"{base_name} (Group {counter})"
-                    counter += 1
-                
-                all_category_names.add(category_name)
-                categories.append(category_name)
-            
-            logging.info(f"Generated meaningful categories: {categories}")
-            self.document_index["categories"] = categories
+            logging.info(f"Generated {len(self.document_index['categories'])} categories")
             
         except Exception as e:
             logging.error(f"Error generating category names: {e}")
             logging.error(traceback.format_exc())
-            # Create more descriptive default categories
-            prefixes = ["Document", "Report", "Analysis", "Research", "Paper", 
-                       "Publication", "Article", "Study"]
-            n_clusters = getattr(self.model, 'n_clusters', 8)
-            self.document_index["categories"] = [f"{prefixes[i % len(prefixes)]} Group {i+1}" 
-                                               for i in range(n_clusters)]
     
-    def _analyze_cluster_content(self, documents, cluster_id, feature_names, cluster_centers):
-        """Analyze documents in a cluster to generate meaningful category information"""
-        try:
-            # Get top TF-IDF terms for this cluster
-            top_term_indices = cluster_centers[cluster_id].argsort()[-10:][::-1]
-            top_terms = [feature_names[idx] for idx in top_term_indices if idx < len(feature_names)]
+    def _categorize_text(self, text):
+        """Determine categories for the document based on content using LDA"""
+        # Handle error messages
+        if text.startswith("Error:"):
+            logging.warning(f"Categorizing text with error: {text[:100]}...")
+            return ["Error"]
             
-            # Filter out meaningless short terms and common words
-            meaningful_terms = []
-            stop_words = set(['the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'must', 'shall', 'said', 'says', 'time', 'way', 'day', 'man', 'woman', 'people', 'year', 'work', 'life', 'hand', 'eye', 'head', 'face', 'back', 'side', 'end', 'part', 'place', 'case', 'point', 'state', 'fact', 'thing', 'right', 'left', 'old', 'new', 'good', 'great', 'little', 'long', 'high', 'small', 'large', 'big', 'first', 'last', 'next', 'other', 'same', 'different', 'much', 'many', 'more', 'most', 'some', 'any', 'all', 'every', 'each', 'both', 'either', 'neither', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'hundred', 'thousand', 'million', 'billion'])
+        try:
+            preprocessed_text = self._preprocess_text(text)
+            
+            # Count documents
+            doc_count = len(self.document_index["documents"])
+            logging.info(f"Current document count: {doc_count}")
+            
+            # For the first few documents, create simple categories based on content
+            if doc_count < 5:
+                logging.info(f"Not enough documents for LDA ({doc_count}/5), creating simple category")
+                
+                # Create a simple category based on document content
+                words = preprocessed_text.split()
+                # Get the most common meaningful words (at least 4 characters)
+                common_words = [word for word in words if len(word) >= 4]
+                
+                if common_words:
+                    # Take up to 3 common words for the category name
+                    from collections import Counter
+                    word_counts = Counter(common_words)
+                    top_words = [word for word, count in word_counts.most_common(3)]
+                    
+                    if top_words:
+                        category_name = f"Document: {', '.join(top_words)}"
+                        logging.info(f"Created simple category: {category_name}")
+                        
+                        # Add this category if it doesn't exist
+                        if category_name not in self.document_index["categories"]:
+                            self.document_index["categories"].append(category_name)
+                            logging.info(f"Added new category: {category_name}")
+                        
+                        return [category_name]
+                
+                # Fallback to Uncategorized
+                if not self.document_index["categories"]:
+                    self.document_index["categories"] = ["Uncategorized"]
+                return ["Uncategorized"]
+            
+            # If we have exactly 5 documents, fit the model
+            if doc_count == 5:
+                logging.info("Reached 5 documents, fitting vectorizer and LDA model")
+                try:
+                    # Get all texts from the document index with fallback handling
+                    all_texts = []
+                    for doc in self.document_index["documents"].values():
+                        if "preprocessed_text" in doc and doc["preprocessed_text"]:
+                            all_texts.append(doc["preprocessed_text"])
+                        elif "full_text" in doc and doc["full_text"]:
+                            all_texts.append(doc["full_text"])
+                        elif "content_file" in doc and doc["content_file"]:
+                            try:
+                                with open(doc["content_file"], 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                                all_texts.append(content)
+                            except Exception as e:
+                                logging.error(f"Error loading content file {doc['content_file']}: {e}")
+                        else:
+                            logging.warning(f"Document {doc.get('id', 'unknown')} has no text content, skipping")
+                    # Fit the vectorizer and model
+                    text_vectors = self.vectorizer.fit_transform(all_texts)
+                    self.model.fit(text_vectors)
+                    
+                    # Save the model and vectorizer
+                    with open(self.model_file, 'wb') as f:
+                        pickle.dump(self.model, f)
+                    with open(self.vectorizer_file, 'wb') as f:
+                        pickle.dump(self.vectorizer, f)
+                    
+                    # Generate category names based on LDA topics
+                    self._generate_category_names()
+                except Exception as e:
+                    logging.error(f"Error fitting LDA model: {e}")
+                    logging.error(traceback.format_exc())
+            
+            # If we have more than 5 documents and the model is fitted
+            if doc_count >= 5 and hasattr(self.model, 'components_'):
+                try:
+                    # Transform the text and get topic probabilities
+                    text_vector = self.vectorizer.transform([preprocessed_text])
+                    topic_probs = self.model.transform(text_vector)[0]
+                    
+                    # Get top topics with probability > threshold
+                    threshold = 0.1
+                    top_topics = []
+                    for i, prob in enumerate(topic_probs):
+                        if prob > threshold:
+                            top_topics.append((i, prob))
+                    
+                    # Sort by probability
+                    top_topics.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Generate category names for top topics
+                    categories = []
+                    for topic_id, prob in top_topics[:3]:  # Top 3 topics
+                        category_name = self._get_lda_topic_name(topic_id)
+                        if category_name:
+                            categories.append(category_name)
+                    
+                    if not categories:
+                        categories = ["Uncategorized"]
+                    
+                    logging.info(f"Document assigned to categories: {categories}")
+                    return categories
+                    
+                except Exception as e:
+                    logging.error(f"Error in LDA categorization: {e}")
+                    logging.error(traceback.format_exc())
+                    return ["Uncategorized"]
+            
+            # Fallback
+            return ["Uncategorized"]
+            
+        except Exception as e:
+            logging.error(f"Error in categorize_text: {e}")
+            logging.error(traceback.format_exc())
+            return ["Error"]
             
             for term in top_terms:
                 if (len(term) > 3 and 

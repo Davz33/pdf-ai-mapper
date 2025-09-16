@@ -438,7 +438,7 @@ This structured format provides better organization and more metadata for enterp
 ## How It Works
 
 1. **Document Processing**:
-   - PDF files are parsed for text using PyPDF2
+   - PDF files are parsed for text using pypdf
    - If text extraction fails or is limited, PDF pages are converted to images for OCR
    - Images are processed using Tesseract OCR
    - Extracted text is cleaned and preprocessed

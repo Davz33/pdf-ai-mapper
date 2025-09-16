@@ -36,17 +36,24 @@ class DocumentService:
             file_size = os.path.getsize(file_path)
             self.logger.info(f"Processing file of size: {file_size} bytes")
             
-            processed_doc_id, categories = self.processor.process(file_path)
+            processed_doc_id = self.processor.process(file_path)
             
-            is_duplicate = processed_doc_id != doc_id
-            if is_duplicate:
-                self.logger.info(f"Duplicate document detected. Original ID: {processed_doc_id}, Upload ID: {doc_id}")
-            
-            if categories and categories[0].startswith("Error:"):
-                self.logger.error(f"Error processing document: {categories[0]}")
+            if processed_doc_id:
+                # Get the document from the index to check categories
+                document = self.processor.get_document_by_id(processed_doc_id)
+                categories = document.get("categories", []) if document else []
+                
+                is_duplicate = processed_doc_id != doc_id
+                if is_duplicate:
+                    self.logger.info(f"Duplicate document detected. Original ID: {processed_doc_id}, Upload ID: {doc_id}")
+                
+                if categories and categories[0].startswith("Error:"):
+                    self.logger.error(f"Error processing document: {categories[0]}")
+                else:
+                    self.logger.info(f"Background processing completed successfully for file: {file_name}")
+                    self.logger.info(f"Document ID: {processed_doc_id}, Categories: {categories}")
             else:
-                self.logger.info(f"Background processing completed successfully for file: {file_name}")
-                self.logger.info(f"Document ID: {processed_doc_id}, Categories: {categories}")
+                self.logger.error(f"Failed to process document: {file_name}")
                 
             self.recategorize_all_documents()
             self._update_status_data()
@@ -85,10 +92,10 @@ class DocumentService:
             self.logger.info("Re-fitting vectorizer and model with all documents")
             all_texts = [doc["preprocessed_text"] for doc in documents.values()]
             
-            text_vectors = self.processor.vectorizer.fit_transform(all_texts)
-            self.processor.model.fit(text_vectors)
+            text_vectors = self.processor.category_manager.vectorizer.fit_transform(all_texts)
+            self.processor.category_manager.model.fit(text_vectors)
             
-            self.processor._generate_category_names()
+            self.processor.category_manager._generate_category_names(self.processor.document_index)
             self.logger.info(f"Regenerated categories: {self.processor.document_index['categories']}")
             
             if 'structured_categories' not in self.processor.document_index or not self.processor.document_index['structured_categories']:
@@ -107,7 +114,7 @@ class DocumentService:
         for doc_id, doc in list(documents.items()):
             try:
                 preprocessed_text = doc["preprocessed_text"]
-                categories = self.processor._categorize_text(preprocessed_text)
+                categories = self.processor.category_manager._categorize_with_lda(preprocessed_text)
                 documents[doc_id]["categories"] = categories
                 updated_count += 1
                 self.logger.info(f"Recategorized document {doc_id}: {categories}")
@@ -119,16 +126,16 @@ class DocumentService:
     def _save_updated_index(self):
         """Save the updated document index."""
         import json
-        with open(self.processor.index_file, 'w') as f:
+        with open(self.processor.storage.index_file, 'w') as f:
             json.dump(self.processor.document_index, f)
     
     def _save_model_files(self):
         """Save the model and vectorizer files."""
         import pickle
-        with open(self.processor.model_file, 'wb') as f:
-            pickle.dump(self.processor.model, f)
-        with open(self.processor.vectorizer_file, 'wb') as f:
-            pickle.dump(self.processor.vectorizer, f)
+        with open(self.processor.category_manager.model_file, 'wb') as f:
+            pickle.dump(self.processor.category_manager.model, f)
+        with open(self.processor.category_manager.vectorizer_file, 'wb') as f:
+            pickle.dump(self.processor.category_manager.vectorizer, f)
     
     def _update_status_data(self):
         """Update status endpoint data."""

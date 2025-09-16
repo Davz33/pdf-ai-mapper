@@ -45,6 +45,15 @@ curl -fsSL https://pixi.sh/install.sh | bash
 pixi install
 ```
 
+5. (Optional) Configure environment variables:
+
+```sh
+cp .env.example .env
+# Edit .env with your specific configuration
+```
+
+The application will work with default settings if no `.env` file is provided.
+
 ### Option 2: Using Docker
 
 1. Make sure you have Docker and Docker Compose installed:
@@ -466,6 +475,19 @@ This structured format provides better organization and more metadata for enterp
    - When a new document is uploaded, it's compared against existing documents
    - If a duplicate is found (by filename or content), the existing document is used
    - This prevents duplicate entries in the document index and search results
+
+## Architecture
+
+The application follows a modular architecture with clear separation of concerns:
+
+- **`app/core/`**: Core business logic including document processing, categorization, and storage
+- **`app/api/`**: FastAPI endpoints for the REST API
+- **`app/services/`**: Service layer for business operations
+- **`app/utils/`**: Utility functions and middleware
+- **`app/models/`**: Pydantic models for data validation
+- **`tests/`**: Comprehensive test suite with unit, integration, and e2e tests
+
+Configuration is managed through environment variables with sensible defaults, and the application includes comprehensive error handling and logging.
 
 ## Document Processing Workflow
 

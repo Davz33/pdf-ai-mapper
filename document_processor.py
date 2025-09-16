@@ -3,7 +3,7 @@ import uuid
 import json
 import pytesseract
 from PIL import Image
-import PyPDF2
+import pypdf
 from pdf2image import convert_from_path
 import nltk
 from nltk.corpus import stopwords
@@ -100,7 +100,7 @@ class DocumentProcessor:
             try:
                 # First try direct PDF text extraction
                 with open(file_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
+                    pdf_reader = pypdf.PdfReader(f)
                     logging.info(f"PDF has {len(pdf_reader.pages)} pages")
                     
                     # Process pages in batches to avoid memory issues

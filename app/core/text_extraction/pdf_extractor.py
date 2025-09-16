@@ -4,7 +4,7 @@ PDF text extraction with OCR fallback.
 import os
 import threading
 import logging
-import PyPDF2
+import pypdf
 from pdf2image import convert_from_path
 import pytesseract
 
@@ -32,7 +32,7 @@ class PDFExtractor:
             try:
                 # Try direct PDF text extraction first
                 with open(file_path, 'rb') as f:
-                    pdf_reader = PyPDF2.PdfReader(f)
+                    pdf_reader = pypdf.PdfReader(f)
                     self.logger.info(f"PDF has {len(pdf_reader.pages)} pages")
                     
                     # Process pages in batches to avoid memory issues

@@ -208,3 +208,6 @@ processed_data/
 # Prettier
 .prettierignore
 .prettierrc
+node_modules
+
+.knowledge

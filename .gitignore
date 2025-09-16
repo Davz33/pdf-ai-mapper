@@ -174,3 +174,6 @@ document_index.json
 
 # PDF files
 *.pdf
+node_modules
+
+.knowledge

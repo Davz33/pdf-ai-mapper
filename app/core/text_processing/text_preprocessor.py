@@ -21,7 +21,22 @@ class TextPreprocessor:
     
     def _setup_stopwords(self):
         """Setup enhanced stopwords list."""
-        self.stop_words = set(stopwords.words('english'))
+        try:
+            self.stop_words = set(stopwords.words('english'))
+        except LookupError:
+            # Fallback if NLTK data is not available
+            self.logger.warning("NLTK stopwords not available, using basic stopwords")
+            self.stop_words = {
+                'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours',
+                'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers',
+                'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves',
+                'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are',
+                'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does',
+                'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until',
+                'while', 'of', 'at', 'by', 'for', 'with', 'through', 'during', 'before', 'after',
+                'above', 'below', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again',
+                'further', 'then', 'once'
+            }
         # Add common but less meaningful words
         additional_stopwords = {
             'said', 'says', 'would', 'could', 'should', 'might', 'may', 'must', 'shall', 'will',
@@ -104,8 +119,14 @@ class TextPreprocessor:
             text = re.sub(r'\s+', ' ', text).strip()
             
             # Tokenize and POS tag
-            tokens = word_tokenize(text)
-            pos_tags = pos_tag(tokens)
+            try:
+                tokens = word_tokenize(text)
+                pos_tags = pos_tag(tokens)
+            except LookupError:
+                # Fallback if NLTK data is not available
+                self.logger.warning("NLTK tokenizer not available, using simple tokenization")
+                tokens = text.split()
+                pos_tags = [(token, 'NN') for token in tokens]  # Default to noun
             
             # Filter tokens based on POS tags and meaningfulness
             meaningful_tokens = []

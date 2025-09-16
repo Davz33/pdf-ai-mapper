@@ -7,18 +7,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api import upload, search, categories, status
 from .utils.middleware import log_requests_middleware
 from .utils.logger import setup_logger
+from .core.config import get_settings, create_directories
+
+# Get settings
+settings = get_settings()
+
+# Create necessary directories
+create_directories()
 
 # Set up logger
-logger = setup_logger("pdf-ai-mapper")
+logger = setup_logger("pdf-ai-mapper", log_file=settings.log_file)
 
 # Create FastAPI app
-app = FastAPI(title="Document AI Mapper")
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    debug=settings.debug
+)
 
 # Configure CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

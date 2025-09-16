@@ -13,26 +13,34 @@ from .text_extraction.extractor_factory import ExtractorFactory
 from .text_processing.text_preprocessor import TextPreprocessor
 from .categorization.category_manager import CategoryManager
 from .storage.document_storage import DocumentStorage
+from .config import get_settings
+from .exceptions import (
+    FileProcessingError,
+    ValidationError,
+    StorageError,
+    ErrorCode
+)
 
 
 class DocumentProcessor:
     """Main document processor that orchestrates all processing steps."""
     
-    def __init__(self, processed_dir: str = "processed_data"):
+    def __init__(self, processed_dir: Optional[str] = None):
+        self.settings = get_settings()
+        self.processed_dir = processed_dir or self.settings.processed_dir
         self.logger = logging.getLogger(__name__)
-        self.processed_dir = processed_dir
         
         # Initialize components
         self.extractor_factory = ExtractorFactory()
         self.text_preprocessor = TextPreprocessor()
-        self.storage = DocumentStorage(processed_dir)
+        self.storage = DocumentStorage(self.processed_dir)
         
         # Load document index
         self.document_index = self.storage.load_document_index()
         
         # Initialize category manager
-        model_file = os.path.join(processed_dir, "category_model.pkl")
-        vectorizer_file = os.path.join(processed_dir, "vectorizer.pkl")
+        model_file = os.path.join(self.processed_dir, "category_model.pkl")
+        vectorizer_file = os.path.join(self.processed_dir, "vectorizer.pkl")
         self.category_manager = CategoryManager(model_file, vectorizer_file)
         
         # Save initial index if it's new
@@ -43,8 +51,36 @@ class DocumentProcessor:
     def process(self, file_path: str) -> Optional[str]:
         """Process a document and add it to the index."""
         try:
+            # Validate file exists
+            if not os.path.exists(file_path):
+                raise FileProcessingError(
+                    message=f"File not found: {file_path}",
+                    error_code=ErrorCode.FILE_NOT_FOUND,
+                    file_path=file_path
+                )
+            
             file_name = os.path.basename(file_path)
             self.logger.info(f"Processing document: {file_name}")
+            
+            # Validate file size
+            file_size = os.path.getsize(file_path)
+            if file_size > self.settings.max_file_size:
+                raise FileProcessingError(
+                    message=f"File too large: {file_size} bytes (max: {self.settings.max_file_size})",
+                    error_code=ErrorCode.FILE_TOO_LARGE,
+                    file_path=file_path,
+                    file_size=file_size
+                )
+            
+            # Validate file type
+            file_extension = os.path.splitext(file_name)[1].lower()
+            if file_extension not in self.settings.allowed_file_types:
+                raise FileProcessingError(
+                    message=f"Unsupported file type: {file_extension}",
+                    error_code=ErrorCode.UNSUPPORTED_FILE_TYPE,
+                    file_path=file_path,
+                    details={"allowed_types": self.settings.allowed_file_types}
+                )
             
             # Calculate content hash for duplicate detection
             content_hash = self.storage.calculate_content_hash(file_path)
@@ -56,12 +92,23 @@ class DocumentProcessor:
                 return existing_doc_id
             
             # Extract text based on file type
-            extractor = self.extractor_factory.get_extractor(file_path)
-            full_text = extractor.extract_text(file_path)
+            try:
+                extractor = self.extractor_factory.get_extractor(file_path)
+                full_text = extractor.extract_text(file_path)
+            except Exception as e:
+                raise FileProcessingError(
+                    message=f"Failed to extract text from {file_name}: {str(e)}",
+                    error_code=ErrorCode.FILE_PROCESSING_FAILED,
+                    file_path=file_path,
+                    original_exception=e
+                )
             
             if not full_text or full_text.startswith("Error:"):
-                self.logger.error(f"Failed to extract text from {file_name}")
-                return None
+                raise FileProcessingError(
+                    message=f"Failed to extract text from {file_name}",
+                    error_code=ErrorCode.FILE_PROCESSING_FAILED,
+                    file_path=file_path
+                )
             
             # Preprocess text
             preprocessed_text = self.text_preprocessor.preprocess_text(full_text)
@@ -97,9 +144,17 @@ class DocumentProcessor:
             self.logger.info(f"Successfully processed document: {file_name} (ID: {doc_id})")
             return doc_id
             
+        except FileProcessingError:
+            # Re-raise file processing errors
+            raise
         except Exception as e:
-            self.logger.error(f"Error processing document {file_path}: {e}")
-            return None
+            # Wrap unexpected errors
+            raise FileProcessingError(
+                message=f"Unexpected error processing document {file_path}: {str(e)}",
+                error_code=ErrorCode.FILE_PROCESSING_FAILED,
+                file_path=file_path,
+                original_exception=e
+            )
     
     def get_categories(self) -> list:
         """Get all available categories."""

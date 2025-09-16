@@ -188,6 +188,9 @@ node_modules
 .vscode
 .cursor/
 
+# Knowledge base
+.knowledge/
+
 # Test data and results
 test-data/
 test_*.py
@@ -205,3 +208,4 @@ processed_data/
 # Prettier
 .prettierignore
 .prettierrc
+

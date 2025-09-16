@@ -1,0 +1,4 @@
+This is a sample document about artificial intelligence and machine learning. 
+It discusses various topics including neural networks, deep learning, and natural language processing.
+The document also covers computer vision, robotics, and the future of AI technology.
+This content will be used to test the document processing and categorization system.

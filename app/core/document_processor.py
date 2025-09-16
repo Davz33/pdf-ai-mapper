@@ -1,11 +1,13 @@
 """
-Refactored document processor using modular components.
+Main document processor for PDF AI Mapper.
+Orchestrates text extraction, processing, categorization, and storage.
 """
+
 import os
 import uuid
-import time
 import logging
-from typing import Tuple, List
+import datetime
+from typing import Optional
 
 from .text_extraction.extractor_factory import ExtractorFactory
 from .text_processing.text_preprocessor import TextPreprocessor
@@ -14,245 +16,115 @@ from .storage.document_storage import DocumentStorage
 
 
 class DocumentProcessor:
-    """Main document processor using modular components."""
+    """Main document processor that orchestrates all processing steps."""
     
-    def __init__(self):
-        self.processed_dir = "processed_data"
-        self.index_file = os.path.join(self.processed_dir, "document_index.json")
-        self.model_file = os.path.join(self.processed_dir, "category_model.pkl")
-        self.vectorizer_file = os.path.join(self.processed_dir, "vectorizer.pkl")
-        
-        # Create processed_data directory if it doesn't exist
-        os.makedirs(self.processed_dir, exist_ok=True)
+    def __init__(self, processed_dir: str = "processed_data"):
+        self.logger = logging.getLogger(__name__)
+        self.processed_dir = processed_dir
         
         # Initialize components
-        self.storage = DocumentStorage(self.index_file)
-        self.preprocessor = TextPreprocessor()
-        self.category_manager = CategoryManager(self.model_file, self.vectorizer_file)
+        self.extractor_factory = ExtractorFactory()
+        self.text_preprocessor = TextPreprocessor()
+        self.storage = DocumentStorage(processed_dir)
         
-        # For backward compatibility, expose document_index
-        self.document_index = self.storage.document_index
+        # Load document index
+        self.document_index = self.storage.load_document_index()
+        
+        # Initialize category manager
+        model_file = os.path.join(processed_dir, "category_model.pkl")
+        vectorizer_file = os.path.join(processed_dir, "vectorizer.pkl")
+        self.category_manager = CategoryManager(model_file, vectorizer_file)
+        
+        # Save initial index if it's new
+        if not os.path.exists(self.storage.index_file):
+            self.storage.save_document_index(self.document_index)
+            self.logger.info("Created new document index file")
     
-    def process(self, file_path: str) -> Tuple[str, List[str]]:
-        """
-        Process a document: extract text, categorize, and index it.
-        
-        Args:
-            file_path: Path to the document file
-            
-        Returns:
-            Tuple of (document_id, categories)
-        """
-        start_time = time.time()
-        logging.info(f"Starting document processing: {file_path}")
-        
-        # Generate unique document ID
-        doc_id = str(uuid.uuid4())
-        
+    def process(self, file_path: str) -> Optional[str]:
+        """Process a document and add it to the index."""
         try:
-            # Extract text using appropriate extractor
-            if not ExtractorFactory.is_supported_file(file_path):
-                raise ValueError(f"Unsupported file type: {file_path}")
-            
-            extractor = ExtractorFactory.create_extractor(file_path)
-            text = extractor.extract_text(file_path)
-            
-            logging.info(f"Text extraction completed in {time.time() - start_time:.2f}s")
-            
-            # Skip if no text was extracted
-            if not text or (text.startswith("Error:") and len(text) < 100):
-                logging.error(f"No text could be extracted from the document: {file_path}")
-                raise ValueError("No text could be extracted from the document")
-            
-            # Check for duplicate documents
             file_name = os.path.basename(file_path)
-            existing_doc_id = self.storage.find_duplicate_document(file_name, text)
+            self.logger.info(f"Processing document: {file_name}")
             
+            # Calculate content hash for duplicate detection
+            content_hash = self.storage.calculate_content_hash(file_path)
+            
+            # Check for duplicates
+            existing_doc_id = self.storage.check_for_duplicate(file_name, content_hash, self.document_index)
             if existing_doc_id:
-                logging.info(f"Duplicate document detected. Using existing document ID: {existing_doc_id}")
-                
-                # Update the existing document with new path if needed
-                self.storage.update_document(existing_doc_id, {"path": file_path})
-                self.storage.save_index()
-                
-                # Return existing document ID and categories
-                existing_doc = self.storage.get_document(existing_doc_id)
-                return existing_doc_id, existing_doc["categories"]
+                self.logger.info(f"Document already exists with ID: {existing_doc_id}")
+                return existing_doc_id
             
-            # Log text sample
-            text_sample = text[:500].replace('\n', ' ').strip()
-            logging.info(f"Extracted text sample: {text_sample}...")
+            # Extract text based on file type
+            extractor = self.extractor_factory.get_extractor(file_path)
+            full_text = extractor.extract_text(file_path)
             
-            # Preprocess the text
-            preprocessed_text = self.preprocessor.preprocess(text)
-            logging.info(f"Text preprocessing completed in {time.time() - start_time:.2f}s")
+            if not full_text or full_text.startswith("Error:"):
+                self.logger.error(f"Failed to extract text from {file_name}")
+                return None
+            
+            # Preprocess text
+            preprocessed_text = self.text_preprocessor.preprocess_text(full_text)
             
             # Categorize the document
-            categories = self._categorize_text(preprocessed_text)
-            logging.info(f"Categorization completed in {time.time() - start_time:.2f}s")
+            categories = self.category_manager.categorize_text(full_text, self.document_index, self.text_preprocessor)
             
-            # Calculate content hash for future duplicate detection
-            content_hash = self.storage.calculate_content_hash(text)
+            # Generate document ID
+            doc_id = str(uuid.uuid4())
             
-            # Store document data
-            document_data = {
+            # Save content to file
+            content_file = self.storage.save_content_file(doc_id, full_text)
+            
+            # Create document entry
+            document_entry = {
                 "id": doc_id,
                 "filename": file_name,
-                "path": file_path,
-                "categories": categories,
+                "file_path": file_path,
+                "content_file": content_file,
+                "full_text": full_text,
                 "preprocessed_text": preprocessed_text,
-                "full_text": text,
-                "content_hash": content_hash
+                "categories": categories,
+                "content_hash": content_hash,
+                "processed_at": datetime.datetime.now().isoformat()
             }
             
-            # Add to document index
-            self.storage.add_document(doc_id, document_data)
-            self.storage.save_index()
+            # Add to index
+            self.document_index["documents"][doc_id] = document_entry
             
-            logging.info(f"Document processing completed in {time.time() - start_time:.2f}s: {doc_id}")
-            return doc_id, categories
+            # Mark for save
+            self.storage.mark_for_save()
+            
+            self.logger.info(f"Successfully processed document: {file_name} (ID: {doc_id})")
+            return doc_id
             
         except Exception as e:
-            logging.error(f"Error processing document {file_path}: {e}")
-            # Return temporary ID and error category
-            return doc_id, ["Error: " + str(e)]
+            self.logger.error(f"Error processing document {file_path}: {e}")
+            return None
     
-    def _categorize_text(self, text: str) -> List[str]:
-        """
-        Determine categories for the document based on content.
-        
-        Args:
-            text: Preprocessed text
-            
-        Returns:
-            List of categories
-        """
-        # Handle error messages
-        if text.startswith("Error:"):
-            logging.warning(f"Categorizing text with error: {text[:100]}...")
-            return ["Error"]
-        
-        try:
-            doc_count = len(self.storage.get_all_documents())
-            logging.info(f"Current document count: {doc_count}")
-            
-            # For the first few documents, create simple categories
-            if doc_count < 5:
-                logging.info(f"Not enough documents for clustering ({doc_count}/5), creating simple category")
-                return self._create_simple_category(text)
-            
-            # If we have exactly 5 documents, fit the model
-            if doc_count == 5:
-                logging.info("Reached 5 documents, fitting vectorizer and model")
-                self._fit_model_with_all_documents()
-            
-            # If we have more than 5 documents and model is fitted
-            if doc_count >= 5 and hasattr(self.category_manager.model, 'cluster_centers_'):
-                return self._predict_category(text)
-            else:
-                logging.info("Model not fitted yet, using Uncategorized")
-                return ["Uncategorized"]
-                
-        except Exception as e:
-            logging.error(f"Error in categorize_text: {e}")
-            return ["Error"]
-    
-    def _create_simple_category(self, text: str) -> List[str]:
-        """Create simple category for documents when clustering isn't available."""
-        keywords = self.preprocessor.extract_keywords(text, max_keywords=3)
-        
-        if keywords:
-            category_name = f"Topic: {', '.join(keywords)}"
-            logging.info(f"Created simple category: {category_name}")
-            
-            # Add this category if it doesn't exist
-            if category_name not in self.document_index["categories"]:
-                self.document_index["categories"].append(category_name)
-                logging.info(f"Added new category: {category_name}")
-            
-            return [category_name]
-        
-        # Fallback to Uncategorized
-        if not self.document_index["categories"]:
-            self.document_index["categories"] = ["Uncategorized"]
-        return ["Uncategorized"]
-    
-    def _fit_model_with_all_documents(self):
-        """Fit the model with all documents."""
-        try:
-            all_texts = [doc["preprocessed_text"] for doc in self.storage.get_all_documents().values()]
-            self.category_manager.fit_model(all_texts)
-            self.category_manager.generate_category_names(self.document_index)
-            self.storage.save_index()
-        except Exception as e:
-            logging.error(f"Error fitting model: {e}")
-    
-    def _predict_category(self, text: str) -> List[str]:
-        """Predict category using the fitted model."""
-        try:
-            cluster = self.category_manager.predict_category(text)
-            logging.info(f"Document assigned to cluster {cluster}")
-            
-            # Return the corresponding category
-            if 0 <= cluster < len(self.document_index["categories"]):
-                category = self.document_index["categories"][cluster]
-                logging.info(f"Assigned category: {category}")
-                return [category]
-            else:
-                logging.warning(f"Cluster {cluster} out of range for categories, using Uncategorized")
-                return ["Uncategorized"]
-        except Exception as e:
-            logging.error(f"Error predicting cluster: {e}")
-            return ["Uncategorized"]
-    
-    def get_categories(self) -> List[str]:
+    def get_categories(self) -> list:
         """Get all available categories."""
-        try:
-            return self.document_index["categories"]
-        except Exception as e:
-            logging.error(f"Error getting categories: {e}")
-            return []
-    
-    def generate_structured_categories(self) -> List[dict]:
-        """Generate structured categories from existing categories."""
-        try:
-            categories = self.document_index.get("categories", [])
-            if not categories:
-                logging.warning("No categories found to structure")
-                return []
-            
-            structured_categories = []
-            for i, category_name in enumerate(categories):
-                parts = category_name.split(": ", 1)
-                if len(parts) == 2:
-                    category_type = parts[0]
-                    keywords = [k.strip() for k in parts[1].split(",")]
-                    
-                    structured_category = {
-                        "id": f"cat-{i+1:03d}",
-                        "type": category_type,
-                        "keywords": keywords,
-                        "display_name": category_name,
-                        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.%f")
-                    }
-                    structured_categories.append(structured_category)
-                    logging.info(f"Created structured category: {structured_category}")
-                else:
-                    logging.warning(f"Could not parse category: {category_name}")
-            
-            # Store the structured categories
-            self.document_index["structured_categories"] = structured_categories
-            logging.info(f"Added {len(structured_categories)} structured categories to document index")
-            
-            # Save the document index
-            self.storage.save_index()
-            logging.info("Saved document index with structured categories")
-            
-            return structured_categories
-        except Exception as e:
-            logging.error(f"Error generating structured categories: {e}")
-            return []
+        return self.document_index.get("categories", ["Uncategorized"])
     
     def clean_up_duplicates(self) -> int:
         """Clean up duplicate documents in the index."""
-        return self.storage.clean_up_duplicates()
+        return self.storage.clean_up_duplicates(self.document_index)
+    
+    def generate_structured_categories(self) -> list:
+        """Generate structured categories from existing categories."""
+        return self.storage.generate_structured_categories(self.document_index)
+    
+    def flush_pending_saves(self) -> None:
+        """Flush any pending saves to disk."""
+        self.storage.flush_pending_saves(self.document_index)
+    
+    def get_document_count(self) -> int:
+        """Get the total number of documents in the index."""
+        return len(self.document_index.get("documents", {}))
+    
+    def get_document_by_id(self, doc_id: str) -> Optional[dict]:
+        """Get a document by its ID."""
+        return self.document_index.get("documents", {}).get(doc_id)
+    
+    def get_all_documents(self) -> dict:
+        """Get all documents in the index."""
+        return self.document_index.get("documents", {})

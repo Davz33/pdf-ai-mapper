@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import upload, search, categories, status
 from .utils.middleware import log_requests_middleware
-from logger import setup_logger
+from .utils.logger import setup_logger
 
 # Set up logger
 logger = setup_logger("pdf-ai-mapper")

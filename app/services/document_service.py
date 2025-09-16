@@ -6,7 +6,7 @@ import uuid
 import threading
 import traceback
 from typing import Tuple, List
-from logger import setup_logger
+from app.utils.logger import setup_logger
 
 from app.core.document_processor import DocumentProcessor
 

@@ -17,7 +17,7 @@ import pytest
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from document_processor import DocumentProcessor
+from app.core.document_processor import DocumentProcessor
 
 
 @pytest.fixture

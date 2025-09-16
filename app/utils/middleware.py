@@ -4,7 +4,7 @@ Custom middleware for the FastAPI application.
 import time
 import traceback
 from fastapi import Request
-from logger import setup_logger
+from .logger import setup_logger
 
 logger = setup_logger("middleware")
 

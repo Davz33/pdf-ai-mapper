@@ -7,7 +7,7 @@ from typing import Dict, Any
 
 from ..models.schemas import CategoryResponse, RecategorizeResponse
 from ..services.document_service import DocumentService
-from logger import setup_logger
+from ..utils.logger import setup_logger
 
 router = APIRouter()
 logger = setup_logger("categories-api")

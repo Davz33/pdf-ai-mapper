@@ -6,7 +6,7 @@ from typing import Dict, Any
 
 from ..models.schemas import StatusResponse, HealthResponse
 from ..services.document_service import DocumentService
-from logger import setup_logger
+from ..utils.logger import setup_logger
 
 router = APIRouter()
 logger = setup_logger("status-api")

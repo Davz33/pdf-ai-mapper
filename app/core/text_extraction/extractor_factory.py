@@ -9,6 +9,28 @@ from .image_extractor import ImageExtractor
 class ExtractorFactory:
     """Factory class for creating text extractors."""
     
+    def get_extractor(self, file_path: str):
+        """
+        Get appropriate extractor based on file extension.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Appropriate extractor instance
+            
+        Raises:
+            ValueError: If file type is not supported
+        """
+        file_extension = os.path.splitext(file_path)[1].lower()
+        
+        if file_extension == '.pdf':
+            return PDFExtractor()
+        elif file_extension in ['.png', '.jpg', '.jpeg', '.tiff', '.bmp']:
+            return ImageExtractor()
+        else:
+            raise ValueError(f"Unsupported file type: {file_extension}")
+    
     @staticmethod
     def create_extractor(file_path: str):
         """

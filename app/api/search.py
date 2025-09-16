@@ -7,7 +7,7 @@ from typing import Dict, Any
 from ..models.schemas import SearchQuery, SearchResponse
 from ..services.document_service import DocumentService
 from app.core.search.search_engine import SearchEngine
-from logger import setup_logger
+from ..utils.logger import setup_logger
 
 router = APIRouter()
 logger = setup_logger("search-api")

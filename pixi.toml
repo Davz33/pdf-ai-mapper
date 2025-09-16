@@ -26,10 +26,6 @@ pytest-asyncio = ">=1.2.0,<2"
 requests = "*"
 aiohttp = "*"
 aiofiles = "*"
-pytest = ">=8.4.2,<9"
-pytest-cov = ">=7.0.0,<8"
-pytest-mock = ">=3.15.0,<4"
-pytest-asyncio = ">=1.2.0,<2"
 
 [tasks]
 start = "python main.py"

@@ -153,15 +153,21 @@ class TextPreprocessor:
             return text
     
     def _extract_key_phrases(self, tokens):
-        """Extract meaningful key phrases (bigrams and trigrams)."""
+        """Extract meaningful key phrases (bigrams and trigrams) using sliding windows."""
         try:
-            # Extract bigrams
-            bigrams = list(itertools.combinations(tokens, 2))
-            bigram_phrases = [' '.join(bigram) for bigram in bigrams if len(bigram[0]) >= 3 and len(bigram[1]) >= 3]
+            # Extract bigrams using sliding window
+            bigram_phrases = []
+            for i in range(len(tokens) - 1):
+                bigram = (tokens[i], tokens[i + 1])
+                if len(bigram[0]) >= 3 and len(bigram[1]) >= 3:
+                    bigram_phrases.append(' '.join(bigram))
             
-            # Extract trigrams
-            trigrams = list(itertools.combinations(tokens, 3))
-            trigram_phrases = [' '.join(trigram) for trigram in trigrams if all(len(word) >= 3 for word in trigram)]
+            # Extract trigrams using sliding window
+            trigram_phrases = []
+            for i in range(len(tokens) - 2):
+                trigram = (tokens[i], tokens[i + 1], tokens[i + 2])
+                if all(len(word) >= 3 for word in trigram):
+                    trigram_phrases.append(' '.join(trigram))
             
             # Count frequency and return most common phrases
             all_phrases = bigram_phrases + trigram_phrases

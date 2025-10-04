@@ -110,6 +110,13 @@ docker-compose down
 
 The API will be available at `http://localhost:7860` for both local and Docker usage.
 
+### API Documentation
+
+- Interactive Swagger UI: `http://localhost:7860/docs`
+- ReDoc reference docs: `http://localhost:7860/redoc`
+
+OpenAPI includes typed response models with examples for faster onboarding and client generation.
+
 ## Available Endpoints
 
 - `POST /upload/`: Upload and process a PDF or image file (automatically categorizes documents)

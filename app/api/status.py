@@ -12,7 +12,12 @@ router = APIRouter()
 logger = setup_logger("status-api")
 
 
-@router.get("/status/", response_model=StatusResponse)
+@router.get(
+    "/status/",
+    response_model=StatusResponse,
+    summary="Get processing status for all documents",
+    description="Return overall status, document count, document statuses, and structured categories (if any).",
+)
 async def get_status() -> Dict[str, Any]:
     """Get the processing status of all documents."""
     try:
@@ -47,7 +52,12 @@ async def get_status() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error retrieving document status: {str(e)}")
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get(
+    "/health",
+    response_model=HealthResponse,
+    summary="Health check",
+    description="Simple health endpoint for readiness probes.",
+)
 async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy"}

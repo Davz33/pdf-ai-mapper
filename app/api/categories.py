@@ -5,7 +5,12 @@ import datetime
 from fastapi import APIRouter, HTTPException, Query
 from typing import Dict, Any
 
-from ..models.schemas import CategoryResponse, RecategorizeResponse
+from ..models.schemas import (
+    CategoryResponse,
+    RecategorizeResponse,
+    CleanupDuplicatesResponse,
+    ErrorResponse,
+)
 from ..services.document_service import DocumentService
 from ..utils.logger import setup_logger
 
@@ -13,7 +18,15 @@ router = APIRouter()
 logger = setup_logger("categories-api")
 
 
-@router.get("/categories/", response_model=CategoryResponse)
+@router.get(
+    "/categories/",
+    response_model=CategoryResponse,
+    summary="Get all available document categories",
+    description="Return structured categories (id, type, keywords, display_name, created_at).",
+    responses={
+        500: {"model": ErrorResponse, "description": "Server error retrieving categories"},
+    },
+)
 async def get_categories() -> Dict[str, Any]:
     """Get all available document categories."""
     try:
@@ -50,7 +63,15 @@ async def get_categories() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error retrieving categories: {str(e)}")
 
 
-@router.post("/recategorize/", response_model=RecategorizeResponse)
+@router.post(
+    "/recategorize/",
+    response_model=RecategorizeResponse,
+    summary="Recategorize all documents",
+    description="Run duplicate cleanup then re-cluster and regenerate categories.",
+    responses={
+        500: {"model": ErrorResponse, "description": "Server error during recategorization"},
+    },
+)
 async def recategorize() -> Dict[str, Any]:
     """Manually trigger recategorization of all documents."""
     try:
@@ -81,7 +102,15 @@ async def recategorize() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error in recategorization: {str(e)}")
 
 
-@router.post("/recategorize-with-clusters/", response_model=RecategorizeResponse)
+@router.post(
+    "/recategorize-with-clusters/",
+    response_model=RecategorizeResponse,
+    summary="Recategorize with a specific number of clusters",
+    description="Adjust clusters to document count when necessary (min 2, max 20).",
+    responses={
+        500: {"model": ErrorResponse, "description": "Server error during recategorization"},
+    },
+)
 async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)) -> Dict[str, Any]:
     """Manually trigger recategorization with a custom number of clusters."""
     try:
@@ -163,7 +192,15 @@ async def recategorize_with_clusters(clusters: int = Query(8, ge=2, le=20)) -> D
         raise HTTPException(status_code=500, detail=f"Error in recategorization: {str(e)}")
 
 
-@router.post("/cleanup-duplicates/")
+@router.post(
+    "/cleanup-duplicates/",
+    response_model=CleanupDuplicatesResponse,
+    summary="Remove duplicate documents",
+    description="Delete duplicate documents based on content hash and return remaining count.",
+    responses={
+        500: {"model": ErrorResponse, "description": "Server error during duplicate cleanup"},
+    },
+)
 async def cleanup_duplicates() -> Dict[str, Any]:
     """Remove duplicate documents from the index."""
     try:
@@ -187,7 +224,15 @@ async def cleanup_duplicates() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error cleaning up duplicates: {str(e)}")
 
 
-@router.post("/generate-structured-categories/")
+@router.post(
+    "/generate-structured-categories/",
+    response_model=RecategorizeResponse,
+    summary="Generate structured categories",
+    description="Generate structured categories from existing string-based categories.",
+    responses={
+        500: {"model": ErrorResponse, "description": "Server error generating structured categories"},
+    },
+)
 async def generate_structured_categories() -> Dict[str, Any]:
     """Generate structured categories from existing categories."""
     try:

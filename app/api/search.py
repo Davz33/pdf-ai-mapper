@@ -4,7 +4,7 @@ Search API endpoints for document search functionality.
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 
-from ..models.schemas import SearchQuery, SearchResponse
+from ..models.schemas import SearchQuery, SearchResponse, ErrorResponse
 from ..services.document_service import DocumentService
 from app.core.search.search_engine import SearchEngine
 from ..utils.logger import setup_logger
@@ -13,7 +13,18 @@ router = APIRouter()
 logger = setup_logger("search-api")
 
 
-@router.post("/search/", response_model=SearchResponse)
+@router.post(
+    "/search/",
+    response_model=SearchResponse,
+    summary="Search documents with optional filters",
+    description=(
+        "Search processed documents by query string. Optionally filter using category names,\n"
+        "structured category types, or keywords. Duplicate documents are filtered automatically."
+    ),
+    responses={
+        500: {"model": ErrorResponse, "description": "Server error during search"},
+    },
+)
 async def search_documents(search_query: SearchQuery) -> Dict[str, Any]:
     """Search through processed documents."""
     try:

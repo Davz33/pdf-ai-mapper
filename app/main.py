@@ -22,7 +22,26 @@ logger = setup_logger("pdf-ai-mapper", log_file=settings.log_file)
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    debug=settings.debug
+    debug=settings.debug,
+    description=(
+        "PDF and Image AI Mapper with OCR, automatic categorization, duplicate handling, and search.\n\n"
+        "This service provides endpoints to upload and process documents, list categories,\n"
+        "perform searches with filters, and inspect processing status."
+    ),
+    contact={
+        "name": "PDF AI Mapper Maintainers",
+        "url": "https://github.com/Davvz33/pdf-ai-mapper",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    openapi_tags=[
+        {"name": "upload", "description": "Upload and process PDF or image files."},
+        {"name": "search", "description": "Search processed documents with optional filters."},
+        {"name": "categories", "description": "Manage and view document categories."},
+        {"name": "status", "description": "Health and processing status endpoints."},
+    ],
 )
 
 # Configure CORS for frontend integration
